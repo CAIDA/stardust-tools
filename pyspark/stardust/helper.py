@@ -178,7 +178,7 @@ class StardustPysparkHelper(object):
         try:
             df = self.spark.read.format("avro").load(fname)
         except pyspark.sql.utils.AnalysisException as e:
-            print e
+            print(e)
             return None
 
         return df
@@ -566,7 +566,7 @@ def StardustHelperExampleCode():
             "SELECT * from flowtuples WHERE ttl > 200 AND tcp_synlen > 24")
 
     # get the number of flows that matched our query
-    print query_df.count()
+    print(query_df.count())
 
     # print the first 20 flows that matched our query
     # ALWAYS use collect() to convert a data frame into a list
@@ -575,8 +575,8 @@ def StardustHelperExampleCode():
     for r in results:
         # this prints the raw row object, which is fine for debugging but
         # you'll want to do some proper formatting for usable output
-        print r
-    print
+        print(r)
+    print()
 
 
     # filtering a set of flowtuples based on a source IP prefix
@@ -609,6 +609,6 @@ def StardustHelperExampleCode():
     # this is a bit lazy -- if you were doing this for real,
     # you would want better error checking and output formatting
     for i in range(0, sect_report.count()):
-        print sect_results[i], base_results[i]
+        print(sect_results[i], base_results[i])
 
 
