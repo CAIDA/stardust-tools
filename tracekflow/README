@@ -1,0 +1,43 @@
+ft_prefixgrep: A tool to search for flowtuples that match a given IPv4
+prefix.
+
+IMPORTANT: ft_prefixgrep is designed to work with legacy flowtuple files
+(i.e. pre-STARDUST) only.
+
+
+Requirements
+============
+
+To build ft_prefixgrep, you'll need the following libraries:
+ * libwandio: https://research.wand.net.nz/software/libwandio.php
+ * libflowtuple: https://github.com/Merit-Research/libflowtuple
+
+If you are using the STARDUST user environment, these libraries
+should already be installed.
+
+
+Building
+========
+
+This should be easy, just run 'make' on the terminal within the
+directory containing the ft_prefixgrep source code.
+
+
+Running
+=======
+
+./ft_prefixgrep -f <flowtuple file> -o <output file> -p <prefix> [ -s | -d ]
+
+    -f <flowtuple file> : the legacy flowtuple file to search for your prefix
+    -o <output file> : the file to write the found flowtuples into
+    -p <prefix>: the prefix to search for, e.g. 1.2.3.0/24
+    -s: if set, limit search to source IP addresses only
+    -d: if set, limit search to destination IP addresses only
+
+Output is written in a CSV format, one line for flowtuple. The line format is:
+  interval timestamp, source IP, destination IP, source port, destination port,
+  protocol, TTL, TCP flags, IP length, packet count
+
+You can use a combination of bash and gnu parallel to easily process multiple
+flowtuple files in parallel. See examplescript.sh for an example of how to do
+this.
