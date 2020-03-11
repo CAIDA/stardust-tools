@@ -89,18 +89,51 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   threadlocal_t *tls = (threadlocal_t *)td;
   int tid = trace_get_perpkt_thread_id(t);
 
+  libtrace_ip_t *ip_hdr = NULL;
+  uint16_t ethertype;
+  uint32_t rem;
+
   if (IS_LIBTRACE_META_PACKET(packet)) {
-    return packet;
+    goto skip;
   }
 
-  if (++tls->pkt_cnt % samplerate == 0) {
-    fprintf(stderr, "TID: %d, sample: %"PRIu64"\n", tid, tls->sample_cnt);
+  if (tls->pkt_cnt % samplerate == 0) {
+    fprintf(stderr, "DEBUG: TID: %d, sample: %"PRIu64"\n", tid, tls->sample_cnt);
     tls->sample_cnt++;
-
+  } else {
+    // ignore this packet
+    goto unwanted;
   }
 
-  // do something with the packet
+  // this is a packet we care about, extract details and kflow it
+  /*
+    kflow flow = {
+        .deviceId    = cfg.device_id,
+        .ipv4SrcAddr = 167772161,
+        .ipv4DstAddr = 167772162,
+        .srcAs       = 1234,
+        .inPkts      = 20,
+        .inBytes     = 40,
+        .srcEthMac   = 1250999896491,
+        .dstEthMac   = 226426397786884,
+        .customs     = customs,
+        .numCustoms  = numCustoms,
+    };
+  */
 
+  ip_hdr = (libtrace_ip_t *)(trace_get_layer3(packet, &ethertype, &rem));
+  if (ip_hdr == NULL || ethertype != TRACE_ETHERTYPE_IP ||
+      rem < sizeof(libtrace_ip_t)) {
+    /* non-ipv4 packet or truncated */
+    goto skip;
+  }
+
+  UNUSED uint32_t src_ip = ntohl(ip_hdr->ip_src.s_addr);
+  UNUSED uint32_t dst_ip = ntohl(ip_hdr->ip_dst.s_addr);
+
+unwanted:
+  tls->pkt_cnt++;
+skip: // don't count the packet
   return packet;
 }
 
