@@ -46,10 +46,163 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-#include <fcntl.h>
+#include <signal.h>
 
-#include <libtrace.h>
+#include <libtrace_parallel.h>
+
+
+char *filter_expr;
+struct libtrace_filter_t *filter;
+int threadcount = 0;
+
+libtrace_t *trace = NULL;
+
+static void cleanup_signal(int signal UNUSED)
+{
+  if (trace) {
+    trace_pstop(trace);
+  }
+}
+
+typedef struct threadlocal {
+  int foo;
+} thread_data_t;
+
+static void *cb_starting(libtrace_t *trace UNUSED,
+                         libtrace_thread_t *t UNUSED,
+                         void *global UNUSED)
+{
+  thread_data_t *td = calloc(0, sizeof(thread_data_t));
+  // TODO init state
+  return td;
+}
+
+static libtrace_packet_t *cb_packet(libtrace_t *trace,
+                                    libtrace_thread_t *t,
+                                    void *global UNUSED,
+                                    void *tls,
+                                    libtrace_packet_t *packet) {
+
+  UNUSED thread_data_t *td = (thread_data_t *)tls;
+
+  if (IS_LIBTRACE_META_PACKET(packet)) {
+    return packet;
+  }
+
+  // do something with the packet
+
+  return packet;
+}
+
+static void cb_stopping(libtrace_t *trace, libtrace_thread_t *t,
+                        void *global UNUSED, void *tls) {
+
+  thread_data_t *td = (thread_data_t *)tls;
+  // TODO clean up state
+  free(td);
+}
+
+static int run_trace(char *uri) {
+  fprintf(stderr, "Consuming from %s:\n", uri);
+
+  libtrace_callback_set_t *pktcbs;
+
+  trace = trace_create(uri);
+
+  if (trace_is_err(trace)) {
+    trace_perror(trace, "Failed to create trace");
+    trace_destroy(trace);
+    return -1;
+  }
+
+  pktcbs = trace_create_callback_set();
+  trace_set_starting_cb(pktcbs, cb_starting);
+  trace_set_stopping_cb(pktcbs, cb_stopping);
+  trace_set_packet_cb(pktcbs, cb_packet);
+
+  if (threadcount != 0) {
+    trace_set_perpkt_threads(trace, threadcount);
+  }
+
+  /* Start the trace as a parallel trace */
+  if (trace_pstart(trace, NULL, pktcbs, NULL) == -1) {
+    trace_perror(trace, "Failed to start trace");
+    trace_destroy(trace);
+    trace_destroy_callback_set(pktcbs);
+    return -1;
+  }
+
+  /* Wait for all threads to stop */
+  trace_join(trace);
+
+  if (trace_is_err(trace)) {
+    trace_perror(trace,"%s", uri);
+  }
+
+  trace_destroy(trace);
+  trace_destroy_callback_set(pktcbs);
+  return 0;
+}
+
+static void usage(char *cmd) {
+  fprintf(stderr,
+          "Usage: %s [-h|--help] [--threads|-t threads] [--filter|-f bpf ]... "
+          "libtraceuri\n", cmd);
+}
 
 int main(int argc, char *argv[]) {
-  return 0;
+  struct sigaction sigact;
+
+  while (1) {
+    int option_index;
+    struct option long_options[] = {
+        {"filter", 1, 0, 'f'},
+        {"help", 0, 0, 'h'},
+        {"threads", 1, 0, 't'},
+        {NULL, 0, 0, 0},
+    };
+
+    int c = getopt_long(argc, argv, "f:ht:", long_options, &option_index);
+
+    if (c == -1)
+      break;
+
+    switch (c) {
+    case 'f':
+      if (filter) {
+        fprintf(stderr, "Only one filter can be specified\n");
+        usage(argv[0]);
+        return -1;
+      }
+      filter_expr = strdup(optarg);
+      filter = trace_create_filter(optarg);
+      break;
+    case 'h':
+      usage(argv[0]);
+      return -1;
+    case 't':
+      threadcount = atoi(optarg);
+      if (threadcount <= 0)
+        threadcount = 1;
+      break;
+    default:
+      fprintf(stderr, "Unknown option: %c\n", c);
+      usage(argv[0]);
+      return -1;
+    }
+  }
+
+  if (argc == 0 || argc - optind != 1) {
+    usage(argv[0]);
+    return -1;
+  }
+
+  sigact.sa_handler = cleanup_signal;
+  sigemptyset(&sigact.sa_mask);
+  sigact.sa_flags = SA_RESTART;
+
+  sigaction(SIGINT, &sigact, NULL);
+  sigaction(SIGTERM, &sigact, NULL);
+
+  return run_trace(argv[optind]);
 }
