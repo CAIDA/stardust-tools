@@ -42,18 +42,18 @@
  *  Author: Alistair King
  */
 
+#include <getopt.h>
+#include <inttypes.h>
+#include <libtrace_parallel.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
-#include <signal.h>
-
-#include <libtrace_parallel.h>
-
 
 char *filter_expr;
 struct libtrace_filter_t *filter;
 int threadcount = 0;
+uint64_t samplerate = 1;
 
 libtrace_t *trace = NULL;
 
@@ -65,28 +65,38 @@ static void cleanup_signal(int signal UNUSED)
 }
 
 typedef struct threadlocal {
-  int foo;
-} thread_data_t;
+
+  uint64_t pkt_cnt; // # pkts since last sample
+  uint64_t sample_cnt; // # pkts that have been sampled
+
+} threadlocal_t;
 
 static void *cb_starting(libtrace_t *trace UNUSED,
                          libtrace_thread_t *t UNUSED,
                          void *global UNUSED)
 {
-  thread_data_t *td = calloc(0, sizeof(thread_data_t));
+  threadlocal_t *tls = calloc(0, sizeof(threadlocal_t));
   // TODO init state
-  return td;
+  return tls;
 }
 
 static libtrace_packet_t *cb_packet(libtrace_t *trace,
                                     libtrace_thread_t *t,
                                     void *global UNUSED,
-                                    void *tls,
+                                    void *td,
                                     libtrace_packet_t *packet) {
 
-  UNUSED thread_data_t *td = (thread_data_t *)tls;
+  threadlocal_t *tls = (threadlocal_t *)td;
+  int tid = trace_get_perpkt_thread_id(t);
 
   if (IS_LIBTRACE_META_PACKET(packet)) {
     return packet;
+  }
+
+  if (++tls->pkt_cnt % samplerate == 0) {
+    fprintf(stderr, "TID: %d, sample: %"PRIu64"\n", tid, tls->sample_cnt);
+    tls->sample_cnt++;
+
   }
 
   // do something with the packet
@@ -97,13 +107,13 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
 static void cb_stopping(libtrace_t *trace, libtrace_thread_t *t,
                         void *global UNUSED, void *tls) {
 
-  thread_data_t *td = (thread_data_t *)tls;
+  threadlocal_t *td = (threadlocal_t *)tls;
   // TODO clean up state
   free(td);
 }
 
 static int run_trace(char *uri) {
-  fprintf(stderr, "Consuming from %s:\n", uri);
+  fprintf(stderr, "Consuming from %s\n", uri);
 
   libtrace_callback_set_t *pktcbs;
 
@@ -146,8 +156,8 @@ static int run_trace(char *uri) {
 
 static void usage(char *cmd) {
   fprintf(stderr,
-          "Usage: %s [-h|--help] [--threads|-t threads] [--filter|-f bpf ]... "
-          "libtraceuri\n", cmd);
+          "Usage: %s [-h|--help] [--samplerate|-s npkts] [--threads|-t threads]\n"
+          "[--filter|-f bpf] libtraceuri\n", cmd);
 }
 
 int main(int argc, char *argv[]) {
@@ -159,10 +169,11 @@ int main(int argc, char *argv[]) {
         {"filter", 1, 0, 'f'},
         {"help", 0, 0, 'h'},
         {"threads", 1, 0, 't'},
+        {"samplerate", 1, 0, 's'},
         {NULL, 0, 0, 0},
     };
 
-    int c = getopt_long(argc, argv, "f:ht:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "f:hs:t:", long_options, &option_index);
 
     if (c == -1)
       break;
@@ -176,6 +187,9 @@ int main(int argc, char *argv[]) {
       }
       filter_expr = strdup(optarg);
       filter = trace_create_filter(optarg);
+      break;
+    case 's':
+      samplerate = atoi(optarg);
       break;
     case 'h':
       usage(argv[0]);
