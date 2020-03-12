@@ -42,6 +42,7 @@
  *  Author: Alistair King
  */
 
+#include <assert.h>
 #include <getopt.h>
 #include <inttypes.h>
 #include <libtrace_parallel.h>
@@ -51,8 +52,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 char *filter_expr;
@@ -87,6 +88,8 @@ typedef struct flow {
   uint32_t pkt_cnt; // XXX
 } PACKED flow_t;
 
+#define FLOWSIZE sizeof(flow_t)
+
 typedef struct threadlocal {
 
   uint64_t pkt_cnt; // # pkts since last sample
@@ -94,6 +97,7 @@ typedef struct threadlocal {
 
   flow_t tmpflow;
   uint8_t *buffer;
+  int bufferused;
 
   int fd;
 
@@ -132,12 +136,27 @@ starterr:
   return NULL;
 }
 
-static int tx_packet(int fd, void *msg, uint64_t msglen) {
-  if (sendto(fd, msg, msglen, 0, (struct sockaddr *)&proxyaddr,
+static int buffer_or_tx(threadlocal_t *tls) {
+  // can we just buffer this message?
+  if (tls->bufferused + FLOWSIZE <= bufferlen) {
+    memcpy(tls->buffer + tls->bufferused, &tls->tmpflow, FLOWSIZE);
+    tls->bufferused += FLOWSIZE;
+    assert(tls->bufferused <= bufferlen);
+    return 0;
+  }
+
+  //fprintf(stderr, "DEBUG: TID %d sending buffer (%d bytes)\n", tls->tmpflow.tid,
+  //        tls->bufferused);
+
+  // TODO: use sendmsg instead
+  if (sendto(tls->fd, tls->buffer, tls->bufferused, 0, (struct sockaddr *)&proxyaddr,
              sizeof(proxyaddr)) < 0) {
     perror("UDP tx failed");
-    return -1;
+    // XXX fall through and drop this buffer
+    // TODO: figure out something better to do here
   }
+
+  tls->bufferused = 0;
   return 0;
 }
 
@@ -174,9 +193,9 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto skip;
   }
 
-  tls->tmpflow.ip_len = ntohs(ip_hdr->ip_len);
-  tls->tmpflow.src_ip = ntohl(ip_hdr->ip_src.s_addr);
-  tls->tmpflow.dst_ip = ntohl(ip_hdr->ip_dst.s_addr);
+  tls->tmpflow.ip_len = ip_hdr->ip_len;
+  tls->tmpflow.src_ip = ip_hdr->ip_src.s_addr;
+  tls->tmpflow.dst_ip = ip_hdr->ip_dst.s_addr;
   tls->tmpflow.proto = ip_hdr->ip_p;
   tls->tmpflow.ttl = ip_hdr->ip_ttl;
 
@@ -197,8 +216,8 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   } else if ((tls->tmpflow.proto == TRACE_IPPROTO_TCP ||
               tls->tmpflow.proto == TRACE_IPPROTO_UDP) &&
              rem >= 4) {
-    tls->tmpflow.src_port = ntohs(*((uint16_t *)transport));
-    tls->tmpflow.dst_port = ntohs(*(((uint16_t *)transport) + 1));
+    tls->tmpflow.src_port = *((uint16_t *)transport);
+    tls->tmpflow.dst_port = *(((uint16_t *)transport) + 1);
 
     // TCP flags
     if (tls->tmpflow.proto == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
@@ -211,7 +230,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
 
   // pkts = 1
 
-  if (tx_packet(tls->fd, &tls->tmpflow, sizeof(tls->tmpflow)) != 0) {
+  if (buffer_or_tx(tls) != 0) {
     // it's UDP, so just keep blasting away?
   }
 
