@@ -1,5 +1,5 @@
 TARGET = tracekentik
-LIBS = -ltrace
+LIBS = -ltrace -lmsgpackc
 CC = gcc
 CFLAGS = -g -Wall -O2
 
