@@ -223,13 +223,14 @@ class StardustPysparkHelper(object):
         # remove dataframes for which no Avro file actually existed
         validframes = filter(lambda x: x is not None, dataframes)
 
-        # combine the remaining dataframes into a single dataframe
-        if (len(validframes) == 0):
+        # if there are no valid dataframes, return an empty one
+        if (all(False for _ in iterator)):
             schema = StructType([])
             sc = self.spark.sparkContext
             empty = self.spark.createDataFrame(sc.emptyRDD(), schema)
             return empty
 
+        # combine the remaining dataframes into a single dataframe
         unioned = reduce(lambda df1, df2: df1.unionAll(df2), validframes)
 
         # finally, use a quick SQL query to strip out any flowtuples that
