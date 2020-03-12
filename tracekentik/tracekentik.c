@@ -37,7 +37,7 @@
 
 /**
  *  tracekentik: simple tool that uses libtrace to sample packets and send them
- *               to the kentik platform using msgpack.
+ *               to the kentik platform (via their "darknet" proxy).
  *
  *  Author: Alistair King
  */
@@ -46,7 +46,6 @@
 #include <getopt.h>
 #include <inttypes.h>
 #include <libtrace_parallel.h>
-#include <msgpack.h>
 #include <netdb.h>
 #include <signal.h>
 #include <stdio.h>
@@ -180,7 +179,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto unwanted;
   }
 
-  // this is a packet we care about, extract details, msgpack it and send
+  // this is a packet we care about, extract details, and buffer it up
   tls->tmpflow.tid = trace_get_perpkt_thread_id(t);
   tls->tmpflow.ts = trace_get_erf_timestamp(packet);
 
