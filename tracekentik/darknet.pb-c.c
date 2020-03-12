@@ -95,13 +95,13 @@ void   darknet__darknet_flows__free_unpacked
   assert(message->base.descriptor == &darknet__darknet_flows__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
-static const ProtobufCFieldDescriptor darknet__darknet_flow__field_descriptors[13] =
+static const ProtobufCFieldDescriptor darknet__darknet_flow__field_descriptors[16] =
 {
   {
     "timestamp",
     1,
     PROTOBUF_C_LABEL_OPTIONAL,
-    PROTOBUF_C_TYPE_INT64,
+    PROTOBUF_C_TYPE_UINT64,
     offsetof(Darknet__DarknetFlow, has_timestamp),
     offsetof(Darknet__DarknetFlow, timestamp),
     NULL,
@@ -253,8 +253,45 @@ static const ProtobufCFieldDescriptor darknet__darknet_flow__field_descriptors[1
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "sample_rate",
+    14,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_UINT32,
+    offsetof(Darknet__DarknetFlow, has_sample_rate),
+    offsetof(Darknet__DarknetFlow, sample_rate),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "packet_id",
+    15,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_UINT64,
+    offsetof(Darknet__DarknetFlow, has_packet_id),
+    offsetof(Darknet__DarknetFlow, packet_id),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "device_id",
+    16,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_UINT32,
+    offsetof(Darknet__DarknetFlow, has_device_id),
+    offsetof(Darknet__DarknetFlow, device_id),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned darknet__darknet_flow__field_indices_by_name[] = {
+  15,   /* field[15] = device_id */
   1,   /* field[1] = in_bytes */
   2,   /* field[2] = in_pkts */
   3,   /* field[3] = input_port */
@@ -263,7 +300,9 @@ static const unsigned darknet__darknet_flow__field_indices_by_name[] = {
   6,   /* field[6] = l4_dst_port */
   7,   /* field[7] = l4_src_port */
   8,   /* field[8] = output_port */
+  14,   /* field[14] = packet_id */
   9,   /* field[9] = protocol */
+  13,   /* field[13] = sample_rate */
   10,   /* field[10] = tcp_flags */
   0,   /* field[0] = timestamp */
   11,   /* field[11] = vlan_in */
@@ -272,7 +311,7 @@ static const unsigned darknet__darknet_flow__field_indices_by_name[] = {
 static const ProtobufCIntRange darknet__darknet_flow__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 13 }
+  { 0, 16 }
 };
 const ProtobufCMessageDescriptor darknet__darknet_flow__descriptor =
 {
@@ -282,7 +321,7 @@ const ProtobufCMessageDescriptor darknet__darknet_flow__descriptor =
   "Darknet__DarknetFlow",
   "darknet",
   sizeof(Darknet__DarknetFlow),
-  13,
+  16,
   darknet__darknet_flow__field_descriptors,
   darknet__darknet_flow__field_indices_by_name,
   1,  darknet__darknet_flow__number_ranges,

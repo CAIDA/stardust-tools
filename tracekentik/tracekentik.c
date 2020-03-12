@@ -190,9 +190,10 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, and buffer it up
-  // XXX tls->tmpflow.tid = trace_get_perpkt_thread_id(t);
-  fprintf(stderr, "DEBUG: cur_flow: %d, tid: %d\n", tls->cur_flow,
-          trace_get_perpkt_thread_id(t));
+  // TODO: move these things that are constant for a thread over to the startup func
+  PB_SET(sample_rate, samplerate);
+  PB_SET(packet_id, tls->sample_cnt);
+  PB_SET(device_id, trace_get_perpkt_thread_id(t));
   PB_SET(timestamp, trace_get_erf_timestamp(packet));
 
   uint16_t ethertype;
