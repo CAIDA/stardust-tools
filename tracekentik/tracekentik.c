@@ -88,18 +88,13 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
                                     libtrace_packet_t *packet) {
 
   threadlocal_t *tls = (threadlocal_t *)td;
-  int tid = trace_get_perpkt_thread_id(t);
-
-  libtrace_ip_t *ip_hdr = NULL;
-  uint16_t ethertype;
-  uint32_t rem;
 
   if (IS_LIBTRACE_META_PACKET(packet)) {
     goto skip;
   }
 
   if (tls->pkt_cnt % samplerate == 0) {
-    fprintf(stderr, "DEBUG: TID: %d, sample: %"PRIu64"\n", tid, tls->sample_cnt);
+    // fprintf(stderr, "DEBUG: TID: %d, sample: %"PRIu64"\n", tid, tls->sample_cnt);
     tls->sample_cnt++;
   } else {
     // ignore this packet
@@ -107,10 +102,12 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, msgpack it and send
-
+  int tid = trace_get_perpkt_thread_id(t);
   UNUSED uint64_t ts = trace_get_erf_timestamp(packet);
 
-  ip_hdr = (libtrace_ip_t *)(trace_get_layer3(packet, &ethertype, &rem));
+  uint16_t ethertype;
+  uint32_t rem;
+  libtrace_ip_t *ip_hdr = (libtrace_ip_t *)(trace_get_layer3(packet, &ethertype, &rem));
   if (ip_hdr == NULL || ethertype != TRACE_ETHERTYPE_IP ||
       rem < sizeof(libtrace_ip_t)) {
     /* non-ipv4 packet or truncated */
