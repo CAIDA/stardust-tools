@@ -7,7 +7,6 @@ Requirements
 TODO:
 To build tracekentik, you'll need the following libraries:
  * libtrace: https://research.wand.net.nz/software/libtrace.php
- * libmsgpack: https://github.com/msgpack/msgpack-c
 
 Building
 ========
