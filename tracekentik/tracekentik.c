@@ -72,10 +72,26 @@ static void cleanup_signal(int signal UNUSED)
   }
 }
 
+typedef struct flow {
+  uint8_t tid; // XXX thread ID (device ID in kentik)
+  uint64_t ts; // XXX timestamp (from ERF)
+  uint16_t ip_len; // IP length (bytes)
+  uint32_t src_ip;
+  uint32_t dst_ip;
+  uint8_t proto;
+  uint8_t ttl;
+  uint16_t src_port;
+  uint16_t dst_port;
+  uint8_t tcp_flags;
+  uint32_t pkt_cnt; // XXX
+} PACKED flow_t;
+
 typedef struct threadlocal {
 
   uint64_t pkt_cnt; // # pkts since last sample
   uint64_t sample_cnt; // # pkts that have been sampled
+
+  flow_t tmpflow;
 
   int fd;
 
@@ -85,7 +101,8 @@ static void *cb_starting(libtrace_t *trace UNUSED,
                          libtrace_thread_t *t UNUSED,
                          void *global UNUSED)
 {
-  threadlocal_t *tls = calloc(0, sizeof(threadlocal_t));
+  threadlocal_t *tls = calloc(1, sizeof(threadlocal_t));
+  tls->tmpflow.pkt_cnt = 1;
 
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
     perror("Socket creation failed");
@@ -126,8 +143,8 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, msgpack it and send
-  UNUSED int tid = trace_get_perpkt_thread_id(t);
-  UNUSED uint64_t ts = trace_get_erf_timestamp(packet);
+  tls->tmpflow.tid = trace_get_perpkt_thread_id(t);
+  tls->tmpflow.ts = trace_get_erf_timestamp(packet);
 
   uint16_t ethertype;
   uint32_t rem;
@@ -138,43 +155,44 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto skip;
   }
 
-  UNUSED uint16_t ip_len = ntohs(ip_hdr->ip_len);
-  UNUSED uint32_t src_ip = ntohl(ip_hdr->ip_src.s_addr);
-  UNUSED uint32_t dst_ip = ntohl(ip_hdr->ip_dst.s_addr);
-  uint8_t proto = ip_hdr->ip_p;
-  UNUSED uint8_t ttl = ip_hdr->ip_ttl;
+  tls->tmpflow.ip_len = ntohs(ip_hdr->ip_len);
+  tls->tmpflow.src_ip = ntohl(ip_hdr->ip_src.s_addr);
+  tls->tmpflow.dst_ip = ntohl(ip_hdr->ip_dst.s_addr);
+  tls->tmpflow.proto = ip_hdr->ip_p;
+  tls->tmpflow.ttl = ip_hdr->ip_ttl;
 
-  void *transport = trace_get_payload_from_ip(ip_hdr, &proto, &rem);
+  void *transport = trace_get_payload_from_ip(ip_hdr, &tls->tmpflow.proto, &rem);
   if (!transport) {
     /* transport header is missing or this is an non-initial IP fragment */
     goto skip;
   }
-  uint16_t src_port = 0;
-  uint16_t dst_port = 0;
-  uint8_t tcp_flags = 0;
-  if (proto == TRACE_IPPROTO_ICMP && rem >= 2) {
+  tls->tmpflow.src_port = 0;
+  tls->tmpflow.dst_port = 0;
+  tls->tmpflow.tcp_flags = 0;
+  if (tls->tmpflow.proto == TRACE_IPPROTO_ICMP && rem >= 2) {
     /* ICMP doesn't have ports, but we are interested in the type and
      * code, so why not reuse the space in the tag structure :) */
     libtrace_icmp_t *icmp = (libtrace_icmp_t *)transport;
-    src_port = icmp->type;
-    dst_port = icmp->code;
-  } else if ((proto == TRACE_IPPROTO_TCP || proto == TRACE_IPPROTO_UDP) &&
+    tls->tmpflow.src_port = icmp->type;
+    tls->tmpflow.dst_port = icmp->code;
+  } else if ((tls->tmpflow.proto == TRACE_IPPROTO_TCP ||
+              tls->tmpflow.proto == TRACE_IPPROTO_UDP) &&
              rem >= 4) {
-    src_port = ntohs(*((uint16_t *)transport));
-    dst_port = ntohs(*(((uint16_t *)transport) + 1));
+    tls->tmpflow.src_port = ntohs(*((uint16_t *)transport));
+    tls->tmpflow.dst_port = ntohs(*(((uint16_t *)transport) + 1));
 
     // TCP flags
-    if (proto == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
+    if (tls->tmpflow.proto == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
       /* Quicker to just read the whole byte direct from the packet,
        * rather than dealing with the individual flags.
        */
-      tcp_flags = *((uint8_t *)transport) + 13;
+      tls->tmpflow.tcp_flags = *((uint8_t *)transport) + 13;
     }
   }
 
   // pkts = 1
 
-  if (tx_packet(tls->fd, &ip_len, sizeof(ip_len)) != 0) {
+  if (tx_packet(tls->fd, &tls->tmpflow, sizeof(tls->tmpflow)) != 0) {
     // it's UDP, so just keep blasting away?
   }
 
