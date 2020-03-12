@@ -1,4 +1,4 @@
-TARGET = tracekflow
+TARGET = tracekentik
 LIBS = -ltrace
 CC = gcc
 CFLAGS = -g -Wall -O2
