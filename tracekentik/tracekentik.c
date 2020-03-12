@@ -46,17 +46,24 @@
 #include <inttypes.h>
 #include <libtrace_parallel.h>
 #include <msgpack.h>
+#include <netdb.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 char *filter_expr;
 struct libtrace_filter_t *filter;
 int threadcount = 0;
 uint64_t samplerate = 10;
 
+char *uri;
 libtrace_t *trace = NULL;
+
+struct sockaddr_in proxyaddr;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -70,6 +77,8 @@ typedef struct threadlocal {
   uint64_t pkt_cnt; // # pkts since last sample
   uint64_t sample_cnt; // # pkts that have been sampled
 
+  int fd;
+
 } threadlocal_t;
 
 static void *cb_starting(libtrace_t *trace UNUSED,
@@ -77,8 +86,23 @@ static void *cb_starting(libtrace_t *trace UNUSED,
                          void *global UNUSED)
 {
   threadlocal_t *tls = calloc(0, sizeof(threadlocal_t));
-  // TODO init state
+
+  if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+    perror("Socket creation failed");
+    free(tls);
+    return NULL;
+  }
+
   return tls;
+}
+
+static int tx_packet(int fd, void *msg, uint64_t msglen) {
+  if (sendto(fd, msg, msglen, 0, (struct sockaddr *)&proxyaddr,
+             sizeof(proxyaddr)) < 0) {
+    perror("UDP tx failed");
+    return -1;
+  }
+  return 0;
 }
 
 static libtrace_packet_t *cb_packet(libtrace_t *trace,
@@ -102,7 +126,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, msgpack it and send
-  int tid = trace_get_perpkt_thread_id(t);
+  UNUSED int tid = trace_get_perpkt_thread_id(t);
   UNUSED uint64_t ts = trace_get_erf_timestamp(packet);
 
   uint16_t ethertype;
@@ -150,6 +174,10 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
 
   // pkts = 1
 
+  if (tx_packet(tls->fd, &ip_len, sizeof(ip_len)) != 0) {
+    // it's UDP, so just keep blasting away?
+  }
+
 unwanted:
   tls->pkt_cnt++;
 skip: // don't count the packet
@@ -157,14 +185,14 @@ skip: // don't count the packet
 }
 
 static void cb_stopping(libtrace_t *trace, libtrace_thread_t *t,
-                        void *global UNUSED, void *tls) {
+                        void *global UNUSED, void *td) {
 
-  threadlocal_t *td = (threadlocal_t *)tls;
-  // TODO clean up state
-  free(td);
+  threadlocal_t *tls = (threadlocal_t *)td;
+  close(tls->fd);
+  free(tls);
 }
 
-static int run_trace(char *uri) {
+static int run_trace() {
   fprintf(stderr, "Consuming from %s\n", uri);
 
   libtrace_callback_set_t *pktcbs;
@@ -209,11 +237,12 @@ static int run_trace(char *uri) {
 static void usage(char *cmd) {
   fprintf(stderr,
           "Usage: %s [-h|--help] [--samplerate|-s npkts] [--threads|-t threads]\n"
-          "[--filter|-f bpf] libtraceuri\n", cmd);
+          "[--filter|-f bpf] libtraceuri kentikproxy:port\n", cmd);
 }
 
 int main(int argc, char *argv[]) {
   struct sigaction sigact;
+  int rc = -1;
 
   while (1) {
     int option_index;
@@ -235,7 +264,7 @@ int main(int argc, char *argv[]) {
       if (filter) {
         fprintf(stderr, "Only one filter can be specified\n");
         usage(argv[0]);
-        return -1;
+        goto cleanup;
       }
       filter_expr = strdup(optarg);
       filter = trace_create_filter(optarg);
@@ -245,7 +274,7 @@ int main(int argc, char *argv[]) {
       break;
     case 'h':
       usage(argv[0]);
-      return -1;
+      goto cleanup;
     case 't':
       threadcount = atoi(optarg);
       if (threadcount <= 0)
@@ -254,14 +283,39 @@ int main(int argc, char *argv[]) {
     default:
       fprintf(stderr, "Unknown option: %c\n", c);
       usage(argv[0]);
-      return -1;
+      goto cleanup;
     }
   }
 
-  if (argc == 0 || argc - optind != 1) {
+  if (argc == 0 || argc - optind != 2) {
     usage(argv[0]);
     return -1;
   }
+
+  uri = argv[optind];
+  char *proxyhost = strdup(argv[optind+1]);
+  char *portstr = NULL;
+  if ((portstr = strchr(proxyhost, ':')) == NULL) {
+    fprintf(stderr, "ERROR: proxy port missing\n");
+    usage(argv[0]);
+    goto cleanup;
+  }
+  *portstr++ = '\0';
+  uint16_t proxyport = atoi(portstr);
+  fprintf(stderr, "INFO: Publishing flows to %s:%"PRIu16"\n", proxyhost, proxyport);
+
+  memset(&proxyaddr, 0, sizeof(proxyaddr));
+  proxyaddr.sin_family = AF_INET;
+  proxyaddr.sin_port = htons(proxyport);
+
+  struct hostent *hp = gethostbyname(proxyhost);
+  if (!hp) {
+    fprintf(stderr, "ERROR: could not obtain address of %s\n", proxyhost);
+    return 0;
+  }
+  memcpy((void *)&proxyaddr.sin_addr, hp->h_addr_list[0], hp->h_length);
+
+  free(proxyhost);
 
   sigact.sa_handler = cleanup_signal;
   sigemptyset(&sigact.sa_mask);
@@ -270,5 +324,8 @@ int main(int argc, char *argv[]) {
   sigaction(SIGINT, &sigact, NULL);
   sigaction(SIGTERM, &sigact, NULL);
 
-  return run_trace(argv[optind]);
+  rc = run_trace();
+
+cleanup:
+  return rc;
 }
