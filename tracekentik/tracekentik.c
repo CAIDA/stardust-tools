@@ -60,7 +60,7 @@ char *filter_expr;
 struct libtrace_filter_t *filter;
 int threadcount = 0;
 uint64_t samplerate = 10;
-int bufferlen = 1000;
+int bufferlen = 10;
 
 char *uri;
 libtrace_t *trace = NULL;
@@ -95,9 +95,13 @@ typedef struct threadlocal {
   uint64_t pkt_cnt; // # pkts since last sample
   uint64_t sample_cnt; // # pkts that have been sampled
 
-  flow_t tmpflow;
+  Darknet__DarknetFlows pbflows;
+  int cur_flow;
   uint8_t *buffer;
-  int bufferused;
+  size_t buffersize;
+
+  // old
+  flow_t tmpflow;
 
   int fd;
 
@@ -108,7 +112,13 @@ static void free_tls(threadlocal_t *tls) {
     if (tls->fd != 0) {
       close(tls->fd);
     }
-    free(tls->buffer);
+    for (int i = 0; i < tls->pbflows.n_flow; i++) {
+      darknet__darknet_flow__free_unpacked(tls->pbflows.flow[i], NULL);
+      tls->pbflows.flow[i] = NULL;
+    }
+    tls->pbflows.n_flow = 0;
+    free(tls->pbflows.flow);
+    tls->pbflows.flow = NULL;
   }
   free(tls);
 }
@@ -118,11 +128,18 @@ static void *cb_starting(libtrace_t *trace UNUSED,
                          void *global UNUSED)
 {
   threadlocal_t *tls = NULL;
-  if ((tls = calloc(1, sizeof(threadlocal_t))) == NULL ||
-      (tls->buffer = malloc(bufferlen)) == NULL) {
+  if ((tls = calloc(1, sizeof(threadlocal_t))) == NULL) {
     goto starterr;
   }
-  tls->tmpflow.pkt_cnt = 1;
+  darknet__darknet_flows__init(&tls->pbflows);
+  tls->pbflows.n_flow = bufferlen;
+  tls->pbflows.flow = malloc(sizeof(Darknet__DarknetFlow*) * tls->pbflows.n_flow);
+  for (int i = 0; i < tls->pbflows.n_flow; i++) {
+    tls->pbflows.flow[i] = malloc(sizeof(Darknet__DarknetFlow));
+    darknet__darknet_flow__init(tls->pbflows.flow[i]);
+  }
+  tls->buffersize = darknet__darknet_flows__get_packed_size(&tls->pbflows);
+  tls->buffer = malloc(tls->buffersize);
 
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
     perror("Socket creation failed");
@@ -136,27 +153,24 @@ starterr:
   return NULL;
 }
 
-static int buffer_or_tx(threadlocal_t *tls) {
-  // can we just buffer this message?
-  if (tls->bufferused + FLOWSIZE <= bufferlen) {
-    memcpy(tls->buffer + tls->bufferused, &tls->tmpflow, FLOWSIZE);
-    tls->bufferused += FLOWSIZE;
-    assert(tls->bufferused <= bufferlen);
-    return 0;
+static int pack_and_tx(threadlocal_t *tls) {
+  if (darknet__darknet_flows__pack(&tls->pbflows, tls->buffer) != tls->buffersize) {
+    fprintf(stderr, "ERROR: Mismatched packed size and buffer size!\n");
+    return -1;
   }
 
   //fprintf(stderr, "DEBUG: TID %d sending buffer (%d bytes)\n", tls->tmpflow.tid,
   //        tls->bufferused);
 
   // TODO: use sendmsg instead
-  if (sendto(tls->fd, tls->buffer, tls->bufferused, 0, (struct sockaddr *)&proxyaddr,
+  if (sendto(tls->fd, tls->buffer, tls->buffersize, 0, (struct sockaddr *)&proxyaddr,
              sizeof(proxyaddr)) < 0) {
     perror("UDP tx failed");
     // XXX fall through and drop this buffer
     // TODO: figure out something better to do here
   }
 
-  tls->bufferused = 0;
+  tls->cur_flow = 0;
   return 0;
 }
 
@@ -230,7 +244,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
 
   // pkts = 1
 
-  if (buffer_or_tx(tls) != 0) {
+  if (pack_and_tx(tls) != 0) {
     // it's UDP, so just keep blasting away?
   }
 
@@ -293,7 +307,7 @@ static void usage(char *cmd) {
   fprintf(
       stderr,
       "Usage: %s [-h|--help] [--samplerate|-s npkts] [--threads|-t threads]\n"
-      "[--filter|-f bpf] [--bufferlen|-b nbytes] libtraceuri "
+      "[--filter|-f bpf] [--bufferlen|-b nflows] libtraceuri "
       "kentikproxy:port\n",
       cmd);
 }
