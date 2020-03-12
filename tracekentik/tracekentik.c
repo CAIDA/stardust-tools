@@ -36,8 +36,8 @@
 
 
 /**
- *  tracekflow: simple tool that uses libtrace to sample packets and send them
- *              to the kentik platform using libkflow.
+ *  tracekentik: simple tool that uses libtrace to sample packets and send them
+ *               to the kentik platform using msgpack.
  *
  *  Author: Alistair King
  */
@@ -54,7 +54,7 @@
 char *filter_expr;
 struct libtrace_filter_t *filter;
 int threadcount = 0;
-uint64_t samplerate = 1;
+uint64_t samplerate = 10;
 
 libtrace_t *trace = NULL;
 
@@ -108,6 +108,8 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
 
   // this is a packet we care about, extract details, msgpack it and send
 
+  UNUSED uint64_t ts = trace_get_erf_timestamp(packet);
+
   ip_hdr = (libtrace_ip_t *)(trace_get_layer3(packet, &ethertype, &rem));
   if (ip_hdr == NULL || ethertype != TRACE_ETHERTYPE_IP ||
       rem < sizeof(libtrace_ip_t)) {
@@ -115,8 +117,41 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto skip;
   }
 
+  UNUSED uint16_t ip_len = ntohs(ip_hdr->ip_len);
   UNUSED uint32_t src_ip = ntohl(ip_hdr->ip_src.s_addr);
   UNUSED uint32_t dst_ip = ntohl(ip_hdr->ip_dst.s_addr);
+  uint8_t proto = ip_hdr->ip_p;
+  UNUSED uint8_t ttl = ip_hdr->ip_ttl;
+
+  void *transport = trace_get_payload_from_ip(ip_hdr, &proto, &rem);
+  if (!transport) {
+    /* transport header is missing or this is an non-initial IP fragment */
+    goto skip;
+  }
+  uint16_t src_port = 0;
+  uint16_t dst_port = 0;
+  uint8_t tcp_flags = 0;
+  if (proto == TRACE_IPPROTO_ICMP && rem >= 2) {
+    /* ICMP doesn't have ports, but we are interested in the type and
+     * code, so why not reuse the space in the tag structure :) */
+    libtrace_icmp_t *icmp = (libtrace_icmp_t *)transport;
+    src_port = icmp->type;
+    dst_port = icmp->code;
+  } else if ((proto == TRACE_IPPROTO_TCP || proto == TRACE_IPPROTO_UDP) &&
+             rem >= 4) {
+    src_port = ntohs(*((uint16_t *)transport));
+    dst_port = ntohs(*(((uint16_t *)transport) + 1));
+
+    // TCP flags
+    if (proto == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
+      /* Quicker to just read the whole byte direct from the packet,
+       * rather than dealing with the individual flags.
+       */
+      tcp_flags = *((uint8_t *)transport) + 13;
+    }
+  }
+
+  // pkts = 1
 
 unwanted:
   tls->pkt_cnt++;

@@ -1,23 +1,29 @@
-tracekflow: A tool to search for flowtuples that match a given IPv4
-prefix.
-
+tracekentik: simple tool that uses libtrace to sample packets and send
+them to the kentik platform using msgpack.
 
 Requirements
 ============
 
 TODO:
-To build tracekflow, you'll need the following libraries:
+To build tracekentik, you'll need the following libraries:
  * libtrace: https://research.wand.net.nz/software/libtrace.php
- * libkflow??: ???
+ * libmsgpack: https://github.com/msgpack/msgpack-c
 
 Building
 ========
 
 This should be easy, just run 'make' on the terminal within the
-directory containing the tracekflow source code.
+directory containing the tracekentik source code.
 
 
 Running
 =======
 
-TODO
+To stream the "Mini-NT" nDAG data:
+tracekentik -s 1 -t 8 ndag:ens4,225.44.0.1,44000
+
+To stream the full telescope:
+tracekentik -s 10 -t 8 ndag:ens4,225.44.0.2,44000
+
+To stream a file:
+tracekentik -s 10 -t 0 pcapfile:/path/to/pcapfile
