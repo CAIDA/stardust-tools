@@ -74,22 +74,6 @@ static void cleanup_signal(int signal UNUSED)
   }
 }
 
-typedef struct flow {
-  uint8_t tid; // XXX thread ID (device ID in kentik)
-  uint64_t ts; // XXX timestamp (from ERF)
-  uint16_t ip_len; // IP length (bytes)
-  uint32_t src_ip;
-  uint32_t dst_ip;
-  uint8_t proto;
-  uint8_t ttl;
-  uint16_t src_port;
-  uint16_t dst_port;
-  uint8_t tcp_flags;
-  uint32_t pkt_cnt; // XXX
-} PACKED flow_t;
-
-#define FLOWSIZE sizeof(flow_t)
-
 typedef struct threadlocal {
 
   uint64_t pkt_cnt; // # pkts since last sample
@@ -99,9 +83,6 @@ typedef struct threadlocal {
   int cur_flow;
   uint8_t *buffer;
   size_t buffersize;
-
-  // old
-  flow_t tmpflow;
 
   int fd;
 
@@ -131,6 +112,8 @@ static void *cb_starting(libtrace_t *trace UNUSED,
   if ((tls = calloc(1, sizeof(threadlocal_t))) == NULL) {
     goto starterr;
   }
+
+  // allocate protobufs buffer
   darknet__darknet_flows__init(&tls->pbflows);
   tls->pbflows.n_flow = bufferlen;
   tls->pbflows.flow = malloc(sizeof(Darknet__DarknetFlow*) * tls->pbflows.n_flow);
@@ -138,9 +121,8 @@ static void *cb_starting(libtrace_t *trace UNUSED,
     tls->pbflows.flow[i] = malloc(sizeof(Darknet__DarknetFlow));
     darknet__darknet_flow__init(tls->pbflows.flow[i]);
   }
-  tls->buffersize = darknet__darknet_flows__get_packed_size(&tls->pbflows);
-  tls->buffer = malloc(tls->buffersize);
 
+  // create UDP tx socket
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
     perror("Socket creation failed");
     goto starterr;
@@ -154,25 +136,38 @@ starterr:
 }
 
 static int pack_and_tx(threadlocal_t *tls) {
-  if (darknet__darknet_flows__pack(&tls->pbflows, tls->buffer) != tls->buffersize) {
-    fprintf(stderr, "ERROR: Mismatched packed size and buffer size!\n");
-    return -1;
-  }
+  assert(tls->buffer == NULL);
+  // TODO: don't malloc/free this every time...
+  tls->buffersize = darknet__darknet_flows__get_packed_size(&tls->pbflows);
+  // allocate buffer for packed data
+  tls->buffer = malloc(tls->buffersize);
 
-  //fprintf(stderr, "DEBUG: TID %d sending buffer (%d bytes)\n", tls->tmpflow.tid,
-  //        tls->bufferused);
+  size_t packedsize = darknet__darknet_flows__pack(&tls->pbflows, tls->buffer);
+  assert(packedsize == tls->buffersize);
 
   // TODO: use sendmsg instead
   if (sendto(tls->fd, tls->buffer, tls->buffersize, 0, (struct sockaddr *)&proxyaddr,
              sizeof(proxyaddr)) < 0) {
     perror("UDP tx failed");
+    tls->cur_flow = 0;
     // XXX fall through and drop this buffer
     // TODO: figure out something better to do here
   }
 
+  free(tls->buffer);
+  tls->buffer = NULL;
+  tls->buffersize = 0;
   tls->cur_flow = 0;
   return 0;
 }
+
+#define CURFLOW (tls->pbflows.flow[tls->cur_flow])
+
+#define PB_SET(field, value)                                            \
+  do {                                                                  \
+    (CURFLOW)->has_##field = 1;                                        \
+    (CURFLOW)->field = value;                                          \
+  } while (0)
 
 static libtrace_packet_t *cb_packet(libtrace_t *trace,
                                     libtrace_thread_t *t,
@@ -195,8 +190,10 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, and buffer it up
-  tls->tmpflow.tid = trace_get_perpkt_thread_id(t);
-  tls->tmpflow.ts = trace_get_erf_timestamp(packet);
+  // XXX tls->tmpflow.tid = trace_get_perpkt_thread_id(t);
+  fprintf(stderr, "DEBUG: cur_flow: %d, tid: %d\n", tls->cur_flow,
+          trace_get_perpkt_thread_id(t));
+  PB_SET(timestamp, trace_get_erf_timestamp(packet));
 
   uint16_t ethertype;
   uint32_t rem;
@@ -207,46 +204,48 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto skip;
   }
 
-  tls->tmpflow.ip_len = ip_hdr->ip_len;
-  tls->tmpflow.src_ip = ip_hdr->ip_src.s_addr;
-  tls->tmpflow.dst_ip = ip_hdr->ip_dst.s_addr;
-  tls->tmpflow.proto = ip_hdr->ip_p;
-  tls->tmpflow.ttl = ip_hdr->ip_ttl;
+  PB_SET(in_bytes, ip_hdr->ip_len);
+  PB_SET(in_pkts, 1);
+  // XXX input_port unused
+  // XXX output_port unused
+  PB_SET(ipv4_dst_addr, ip_hdr->ip_dst.s_addr);
+  PB_SET(ipv4_src_addr, ip_hdr->ip_src.s_addr);
+  PB_SET(protocol, ip_hdr->ip_p);
 
-  void *transport = trace_get_payload_from_ip(ip_hdr, &tls->tmpflow.proto, &rem);
+  // XXX tls->tmpflow.ttl = ip_hdr->ip_ttl;
+
+  void *transport = trace_get_payload_from_ip(ip_hdr, &ip_hdr->ip_p, &rem);
   if (!transport) {
     /* transport header is missing or this is an non-initial IP fragment */
     goto skip;
   }
-  tls->tmpflow.src_port = 0;
-  tls->tmpflow.dst_port = 0;
-  tls->tmpflow.tcp_flags = 0;
-  if (tls->tmpflow.proto == TRACE_IPPROTO_ICMP && rem >= 2) {
+
+  if (ip_hdr->ip_p == TRACE_IPPROTO_ICMP && rem >= 2) {
     /* ICMP doesn't have ports, but we are interested in the type and
      * code, so why not reuse the space in the tag structure :) */
     libtrace_icmp_t *icmp = (libtrace_icmp_t *)transport;
-    tls->tmpflow.src_port = icmp->type;
-    tls->tmpflow.dst_port = icmp->code;
-  } else if ((tls->tmpflow.proto == TRACE_IPPROTO_TCP ||
-              tls->tmpflow.proto == TRACE_IPPROTO_UDP) &&
+    PB_SET(l4_src_port, icmp->type);
+    PB_SET(l4_dst_port, icmp->code);
+  } else if ((ip_hdr->ip_p == TRACE_IPPROTO_TCP ||
+              ip_hdr->ip_p == TRACE_IPPROTO_UDP) &&
              rem >= 4) {
-    tls->tmpflow.src_port = *((uint16_t *)transport);
-    tls->tmpflow.dst_port = *(((uint16_t *)transport) + 1);
+    PB_SET(l4_src_port, *((uint16_t *)transport));
+    PB_SET(l4_dst_port, *(((uint16_t *)transport) + 1));
 
     // TCP flags
-    if (tls->tmpflow.proto == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
+    if (ip_hdr->ip_p == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
       /* Quicker to just read the whole byte direct from the packet,
        * rather than dealing with the individual flags.
        */
-      tls->tmpflow.tcp_flags = *((uint8_t *)transport) + 13;
+      PB_SET(tcp_flags, *((uint8_t *)transport) + 13);
     }
   }
 
-  // pkts = 1
-
-  if (pack_and_tx(tls) != 0) {
+  if (++tls->cur_flow == bufferlen &&
+      pack_and_tx(tls) != 0) {
     // it's UDP, so just keep blasting away?
   }
+  assert(tls->cur_flow < bufferlen);
 
 unwanted:
   tls->pkt_cnt++;
