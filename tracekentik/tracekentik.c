@@ -59,6 +59,7 @@ char *filter_expr;
 struct libtrace_filter_t *filter;
 int threadcount = 0;
 uint64_t samplerate = 10;
+int bufferlen = 1000;
 
 char *uri;
 libtrace_t *trace = NULL;
@@ -92,25 +93,43 @@ typedef struct threadlocal {
   uint64_t sample_cnt; // # pkts that have been sampled
 
   flow_t tmpflow;
+  uint8_t *buffer;
 
   int fd;
 
 } threadlocal_t;
 
+static void free_tls(threadlocal_t *tls) {
+  if (tls) {
+    if (tls->fd != 0) {
+      close(tls->fd);
+    }
+    free(tls->buffer);
+  }
+  free(tls);
+}
+
 static void *cb_starting(libtrace_t *trace UNUSED,
                          libtrace_thread_t *t UNUSED,
                          void *global UNUSED)
 {
-  threadlocal_t *tls = calloc(1, sizeof(threadlocal_t));
+  threadlocal_t *tls = NULL;
+  if ((tls = calloc(1, sizeof(threadlocal_t))) == NULL ||
+      (tls->buffer = malloc(bufferlen)) == NULL) {
+    goto starterr;
+  }
   tls->tmpflow.pkt_cnt = 1;
 
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
     perror("Socket creation failed");
-    free(tls);
-    return NULL;
+    goto starterr;
   }
 
   return tls;
+
+starterr:
+  free_tls(tls);
+  return NULL;
 }
 
 static int tx_packet(int fd, void *msg, uint64_t msglen) {
@@ -206,8 +225,7 @@ static void cb_stopping(libtrace_t *trace, libtrace_thread_t *t,
                         void *global UNUSED, void *td) {
 
   threadlocal_t *tls = (threadlocal_t *)td;
-  close(tls->fd);
-  free(tls);
+  free_tls(tls);
 }
 
 static int run_trace() {
@@ -253,9 +271,12 @@ static int run_trace() {
 }
 
 static void usage(char *cmd) {
-  fprintf(stderr,
-          "Usage: %s [-h|--help] [--samplerate|-s npkts] [--threads|-t threads]\n"
-          "[--filter|-f bpf] libtraceuri kentikproxy:port\n", cmd);
+  fprintf(
+      stderr,
+      "Usage: %s [-h|--help] [--samplerate|-s npkts] [--threads|-t threads]\n"
+      "[--filter|-f bpf] [--bufferlen|-b nbytes] libtraceuri "
+      "kentikproxy:port\n",
+      cmd);
 }
 
 int main(int argc, char *argv[]) {
@@ -265,19 +286,23 @@ int main(int argc, char *argv[]) {
   while (1) {
     int option_index;
     struct option long_options[] = {
-        {"filter", 1, 0, 'f'},
-        {"help", 0, 0, 'h'},
-        {"threads", 1, 0, 't'},
-        {"samplerate", 1, 0, 's'},
-        {NULL, 0, 0, 0},
+        {"bufferlen", 1, 0, 'b'},     //
+        {"filter", 1, 0, 'f'},     //
+        {"help", 0, 0, 'h'},       //
+        {"threads", 1, 0, 't'},    //
+        {"samplerate", 1, 0, 's'}, //
+        {NULL, 0, 0, 0},           //
     };
 
-    int c = getopt_long(argc, argv, "f:hs:t:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "b:f:hs:t:", long_options, &option_index);
 
     if (c == -1)
       break;
 
     switch (c) {
+    case 'b':
+      bufferlen = atoi(optarg);
+      break;
     case 'f':
       if (filter) {
         fprintf(stderr, "Only one filter can be specified\n");
