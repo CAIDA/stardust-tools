@@ -28,7 +28,7 @@ struct  _Darknet__DarknetFlow
 {
   ProtobufCMessage base;
   protobuf_c_boolean has_timestamp;
-  int64_t timestamp;
+  uint64_t timestamp;
   protobuf_c_boolean has_in_bytes;
   uint64_t in_bytes;
   protobuf_c_boolean has_in_pkts;
@@ -53,10 +53,16 @@ struct  _Darknet__DarknetFlow
   uint32_t vlan_in;
   protobuf_c_boolean has_vlan_out;
   uint32_t vlan_out;
+  protobuf_c_boolean has_sample_rate;
+  uint32_t sample_rate;
+  protobuf_c_boolean has_packet_id;
+  uint64_t packet_id;
+  protobuf_c_boolean has_device_id;
+  uint32_t device_id;
 };
 #define DARKNET__DARKNET_FLOW__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&darknet__darknet_flow__descriptor) \
-    , 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0 }
+    , 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0 }
 
 
 struct  _Darknet__DarknetFlows
