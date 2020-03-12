@@ -104,6 +104,18 @@ static void free_tls(threadlocal_t *tls) {
   free(tls);
 }
 
+#define CURFLOW (tls->pbflows.flow[tls->cur_flow])
+
+#define PB_HAS(field)                                                          \
+  do {                                                                         \
+    (CURFLOW)->has_##field = 1;                                                \
+  } while (0)
+
+#define PB_SET(field, value)                                                   \
+  do {                                                                         \
+    (CURFLOW)->field = value;                                                  \
+  } while (0)
+
 static void *cb_starting(libtrace_t *trace UNUSED,
                          libtrace_thread_t *t UNUSED,
                          void *global UNUSED)
@@ -120,7 +132,23 @@ static void *cb_starting(libtrace_t *trace UNUSED,
   for (int i = 0; i < tls->pbflows.n_flow; i++) {
     tls->pbflows.flow[i] = calloc(1, sizeof(Darknet__DarknetFlow));
     darknet__darknet_flow__init(tls->pbflows.flow[i]);
+    tls->cur_flow = i;
+    PB_HAS(timestamp);
+    PB_HAS(in_bytes);
+    PB_HAS(in_pkts);
+    PB_HAS(ipv4_dst_addr);
+    PB_HAS(ipv4_src_addr);
+    PB_HAS(l4_dst_port);
+    PB_HAS(l4_src_port);
+    PB_HAS(protocol);
+    PB_HAS(tcp_flags);
+    PB_HAS(sample_rate);
+    PB_HAS(packet_id);
+    PB_HAS(device_id);
+    PB_SET(sample_rate, samplerate);
+    PB_SET(device_id, trace_get_perpkt_thread_id(t));
   }
+  tls->cur_flow = 0;
 
   // create UDP tx socket
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
@@ -146,13 +174,10 @@ static int pack_and_tx(threadlocal_t *tls) {
   assert(packedsize == tls->buffersize);
 
   // TODO: use sendmsg instead
-  if (sendto(tls->fd, tls->buffer, tls->buffersize, 0, (struct sockaddr *)&proxyaddr,
-             sizeof(proxyaddr)) < 0) {
-    perror("UDP tx failed");
-    tls->cur_flow = 0;
-    // XXX fall through and drop this buffer
-    // TODO: figure out something better to do here
-  }
+  sendto(tls->fd, tls->buffer, tls->buffersize, 0, (struct sockaddr *)&proxyaddr,
+         sizeof(proxyaddr));
+  // XXX fall through and thus drop this buffer
+  // TODO: is there something better to do here?
 
   free(tls->buffer);
   tls->buffer = NULL;
@@ -160,14 +185,6 @@ static int pack_and_tx(threadlocal_t *tls) {
   tls->cur_flow = 0;
   return 0;
 }
-
-#define CURFLOW (tls->pbflows.flow[tls->cur_flow])
-
-#define PB_SET(field, value)                                            \
-  do {                                                                  \
-    (CURFLOW)->has_##field = 1;                                        \
-    (CURFLOW)->field = value;                                          \
-  } while (0)
 
 static libtrace_packet_t *cb_packet(libtrace_t *trace,
                                     libtrace_thread_t *t,
@@ -190,10 +207,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   }
 
   // this is a packet we care about, extract details, and buffer it up
-  // TODO: move these things that are constant for a thread over to the startup func
-  PB_SET(sample_rate, samplerate);
   PB_SET(packet_id, tls->sample_cnt);
-  PB_SET(device_id, trace_get_perpkt_thread_id(t));
   PB_SET(timestamp, trace_get_erf_timestamp(packet));
 
   uint16_t ethertype;
