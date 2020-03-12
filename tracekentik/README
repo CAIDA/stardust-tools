@@ -7,6 +7,7 @@ Requirements
 TODO:
 To build tracekentik, you'll need the following libraries:
  * libtrace: https://research.wand.net.nz/software/libtrace.php
+ * protobuf-c: https://github.com/protobuf-c/protobuf-c
 
 Building
 ========
