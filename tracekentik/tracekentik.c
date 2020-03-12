@@ -116,9 +116,9 @@ static void *cb_starting(libtrace_t *trace UNUSED,
   // allocate protobufs buffer
   darknet__darknet_flows__init(&tls->pbflows);
   tls->pbflows.n_flow = bufferlen;
-  tls->pbflows.flow = malloc(sizeof(Darknet__DarknetFlow*) * tls->pbflows.n_flow);
+  tls->pbflows.flow = calloc(1, sizeof(Darknet__DarknetFlow*) * tls->pbflows.n_flow);
   for (int i = 0; i < tls->pbflows.n_flow; i++) {
-    tls->pbflows.flow[i] = malloc(sizeof(Darknet__DarknetFlow));
+    tls->pbflows.flow[i] = calloc(1, sizeof(Darknet__DarknetFlow));
     darknet__darknet_flow__init(tls->pbflows.flow[i]);
   }
 
