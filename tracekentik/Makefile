@@ -1,5 +1,5 @@
 TARGET = tracekentik
-LIBS = -ltrace
+LIBS = -ltrace -lprotobuf-c
 CC = gcc
 CFLAGS = -g -Wall -O2
 

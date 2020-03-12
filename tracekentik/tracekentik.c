@@ -54,6 +54,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "darknet.pb-c.h"
 
 char *filter_expr;
 struct libtrace_filter_t *filter;
