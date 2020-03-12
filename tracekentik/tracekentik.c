@@ -45,6 +45,7 @@
 #include <getopt.h>
 #include <inttypes.h>
 #include <libtrace_parallel.h>
+#include <msgpack.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,21 +106,7 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto unwanted;
   }
 
-  // this is a packet we care about, extract details and kflow it
-  /*
-    kflow flow = {
-        .deviceId    = cfg.device_id,
-        .ipv4SrcAddr = 167772161,
-        .ipv4DstAddr = 167772162,
-        .srcAs       = 1234,
-        .inPkts      = 20,
-        .inBytes     = 40,
-        .srcEthMac   = 1250999896491,
-        .dstEthMac   = 226426397786884,
-        .customs     = customs,
-        .numCustoms  = numCustoms,
-    };
-  */
+  // this is a packet we care about, extract details, msgpack it and send
 
   ip_hdr = (libtrace_ip_t *)(trace_get_layer3(packet, &ethertype, &rem));
   if (ip_hdr == NULL || ethertype != TRACE_ETHERTYPE_IP ||
