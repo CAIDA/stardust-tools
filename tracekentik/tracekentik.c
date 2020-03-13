@@ -219,12 +219,12 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
     goto skip;
   }
 
-  PB_SET(in_bytes, ip_hdr->ip_len);
+  PB_SET(in_bytes, ntohs(ip_hdr->ip_len));
   PB_SET(in_pkts, 1);
   // XXX input_port unused
   // XXX output_port unused
-  PB_SET(ipv4_dst_addr, ip_hdr->ip_dst.s_addr);
-  PB_SET(ipv4_src_addr, ip_hdr->ip_src.s_addr);
+  PB_SET(ipv4_dst_addr, ntohl(ip_hdr->ip_dst.s_addr));
+  PB_SET(ipv4_src_addr, ntohl(ip_hdr->ip_src.s_addr));
   PB_SET(protocol, ip_hdr->ip_p);
 
   // XXX tls->tmpflow.ttl = ip_hdr->ip_ttl;
@@ -244,8 +244,8 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
   } else if ((ip_hdr->ip_p == TRACE_IPPROTO_TCP ||
               ip_hdr->ip_p == TRACE_IPPROTO_UDP) &&
              rem >= 4) {
-    PB_SET(l4_src_port, *((uint16_t *)transport));
-    PB_SET(l4_dst_port, *(((uint16_t *)transport) + 1));
+    PB_SET(l4_src_port, ntohs(*((uint16_t *)transport)));
+    PB_SET(l4_dst_port, ntohs(*(((uint16_t *)transport) + 1)));
 
     // TCP flags
     if (ip_hdr->ip_p == TRACE_IPPROTO_TCP && rem >= sizeof(libtrace_tcp_t)) {
