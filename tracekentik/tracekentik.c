@@ -125,6 +125,8 @@ static void *cb_starting(libtrace_t *trace UNUSED,
     goto starterr;
   }
 
+  int tid = trace_get_perpkt_thread_id(t);
+
   // allocate protobufs buffer
   darknet__darknet_flows__init(&tls->pbflows);
   tls->pbflows.n_flow = bufferlen;
@@ -147,13 +149,22 @@ static void *cb_starting(libtrace_t *trace UNUSED,
     PB_HAS(device_id);
     // set fields that are constant per-thread
     PB_SET(sample_rate, samplerate);
-    PB_SET(device_id, trace_get_perpkt_thread_id(t));
+    PB_SET(device_id, tid);
   }
   tls->cur_flow = 0;
 
   // create UDP tx socket
   if ((tls->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
     perror("Socket creation failed");
+    goto starterr;
+  }
+  // bind to a loopback address based on thread ID
+  struct sockaddr_in srcaddr;
+  srcaddr.sin_family = AF_INET;
+  srcaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK+tid);
+  srcaddr.sin_port = 0; // any port
+  if (bind(tls->fd, (struct sockaddr*)&srcaddr, sizeof(srcaddr)) != 0) {
+    perror("Bind failed");
     goto starterr;
   }
 
