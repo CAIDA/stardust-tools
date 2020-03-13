@@ -34,6 +34,7 @@
 
 import time, calendar
 import pyspark, ipaddress
+from functools import reduce
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf, col, lit, from_unixtime, array
 from pyspark.sql.functions import countDistinct
@@ -224,7 +225,7 @@ class StardustPysparkHelper(object):
         validframes = filter(lambda x: x is not None, dataframes)
 
         # if there are no valid dataframes, return an empty one
-        if (all(False for _ in iterator)):
+        if (all(False for _ in validframes)):
             schema = StructType([])
             sc = self.spark.sparkContext
             empty = self.spark.createDataFrame(sc.emptyRDD(), schema)
