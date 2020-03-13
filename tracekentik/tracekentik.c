@@ -133,6 +133,7 @@ static void *cb_starting(libtrace_t *trace UNUSED,
     tls->pbflows.flow[i] = calloc(1, sizeof(Darknet__DarknetFlow));
     darknet__darknet_flow__init(tls->pbflows.flow[i]);
     tls->cur_flow = i;
+    // enable all the always-used fields
     PB_HAS(timestamp);
     PB_HAS(in_bytes);
     PB_HAS(in_pkts);
@@ -141,10 +142,10 @@ static void *cb_starting(libtrace_t *trace UNUSED,
     PB_HAS(l4_dst_port);
     PB_HAS(l4_src_port);
     PB_HAS(protocol);
-    PB_HAS(tcp_flags);
     PB_HAS(sample_rate);
     PB_HAS(packet_id);
     PB_HAS(device_id);
+    // set fields that are constant per-thread
     PB_SET(sample_rate, samplerate);
     PB_SET(device_id, trace_get_perpkt_thread_id(t));
   }
@@ -252,13 +253,16 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace,
       /* Quicker to just read the whole byte direct from the packet,
        * rather than dealing with the individual flags.
        */
+      PB_HAS(tcp_flags);
       PB_SET(tcp_flags, *((uint8_t *)transport) + 13);
+    } else {
+      (CURFLOW)->has_tcp_flags = 0;
     }
   }
 
   if (++tls->cur_flow == bufferlen &&
       pack_and_tx(tls) != 0) {
-    // it's UDP, so just keep blasting away?
+    // TODO: it's UDP, so just keep blasting away?
   }
   assert(tls->cur_flow < bufferlen);
 
