@@ -214,25 +214,34 @@ class StardustPysparkHelper(object):
         if self.spark is None:
             return None
 
+        schema = StructType([])
+        sc = self.spark.sparkContext
+        empty = self.spark.createDataFrame(sc.emptyRDD(), schema)
+
         # First, reduce our workload by limiting the number of Avro
         # files that we try to load.
         flist = self._getFlowtupleFileList(start, end, self.ftrotfreq)
-
+        
         # load each expected Avro file into its own dataframe
         dataframes = map(lambda r: self._load_avro_file(r), flist)
-
+        
         # remove dataframes for which no Avro file actually existed
         validframes = filter(lambda x: x is not None, dataframes)
-
+      
         # if there are no valid dataframes, return an empty one
-        if (all(False for _ in validframes)):
-            schema = StructType([])
-            sc = self.spark.sparkContext
-            empty = self.spark.createDataFrame(sc.emptyRDD(), schema)
-            return empty
+        #if (all(False for _ in validframes)):
+        #    return empty
 
         # combine the remaining dataframes into a single dataframe
-        unioned = reduce(lambda df1, df2: df1.unionAll(df2), validframes)
+        unioned = None
+        for vf in validframes:
+            if unioned is None:
+                unioned = vf
+            else:
+                unioned = unioned.unionAll(vf)
+
+        if unioned is None or unioned.rdd.isEmpty():
+            return empty
 
         # finally, use a quick SQL query to strip out any flowtuples that
         # don't fall in the exact time period requested, due to loading
@@ -326,6 +335,9 @@ class StardustPysparkHelper(object):
 
         if self.spark is None:
             return None
+
+        if ftuples.rdd.isEmpty():
+            return ftuples
 
         ftuples.createOrReplaceTempView(tablename)
         queryhdl = self.spark.sql(sqlquery)
@@ -529,8 +541,10 @@ class StardustPysparkHelper(object):
             single = ftuples.where(w)
 
             if not setbaseline:
-                baseline = ftuples.intersect(single)
+                baseline = single
+                intersect = single
                 setbaseline = True
+                continue
 
             intersect = intersect.intersect(single)
 
