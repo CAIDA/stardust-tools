@@ -252,6 +252,57 @@ class StardustPysparkHelper(object):
 
         return self.runSQLAgainstFlowtuples(unioned, "flowtuples", sqlquery)
 
+    def _getTopValues(self, ftuples, metric, topn, topbylabel, topagg,
+            includeother):
+
+        sqlquery = "SELECT %s, %s AS %s from flowtuples GROUP BY %s ORDER BY %s DESC" % (metric, topagg, topbylabel, metric, topbylabel)
+
+        result = {}
+        queryres = self.runSQLAgainstFlowtuples(ftuples, "flowtuples", sqlquery)
+
+        rank = 1
+        othercount = 0
+        totalflows = 0.0
+        cumflowpct = 0.0
+        for r in queryres.collect():
+            totalflows += r[topbylabel]
+
+            if topn is not None and rank > topn:
+                othercount += r[topbylabel]
+            else:
+                result[rank] = {'name': r[metric], 'rank': rank,
+                        topbylabel: r[topbylabel]}
+                rank += 1
+
+        if othercount > 0 and totalflows is not None:
+            result['Other'] = {'name': "Other", 'rank': rank,
+                    topbylabel: othercount}
+
+        for k,v in result.items():
+            result[k]['pct'] = v[topbylabel] / totalflows
+            cumflowpct += result[k]['pct']
+            result[k]['cumpct'] = cumflowpct
+
+        return result
+
+    def getTopValuesByFlowCount(self, ftuples, metric, topn, includeother=True):
+
+        if metric not in ftuples.columns:
+            return None
+
+        return self._getTopValues(ftuples, metric, topn, "flows", "COUNT(*)",
+                includeother)
+
+    def getTopValuesByPacketCount(self, ftuples, metric, topn,
+            includeother=True):
+
+        if metric not in ftuples.columns:
+            return None
+
+        return self._getTopValues(ftuples, metric, topn, "packets",
+                "SUM(packet_cnt)", includeother)
+
+
     def getFlowtuplesByRecentTime(self, secondsback):
         """
         Produces a data frame containing all flowtuple records for the
@@ -533,20 +584,19 @@ class StardustPysparkHelper(object):
         frame consists of flowtuples in 'ftuples' that matched the
         FIRST criterion in the 'wheres' parameter.
         """
+
         setbaseline = False
         intersect = ftuples
         baseline = ftuples
 
         for w in wheres:
-            single = ftuples.where(w)
-
             if not setbaseline:
-                baseline = single
-                intersect = single
+                baseline = ftuples.where(w)
+                intersect = baseline
                 setbaseline = True
                 continue
 
-            intersect = intersect.intersect(single)
+            intersect = intersect.where(w) 
 
         return intersect, baseline
 
