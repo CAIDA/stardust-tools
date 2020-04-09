@@ -255,6 +255,58 @@ class StardustPysparkHelper(object):
     def _getTopValues(self, ftuples, metric, topn, topbylabel, topagg,
             includeother):
 
+        """
+        Internal function that performs the work required to produce the
+        results for the getTopValuesByX functions.
+
+        Parameters
+        ----------
+        ftuples: DataFrame
+            the data frame containing the flowtuple records to run the
+            query against
+
+        metric: str
+            the name of the flow property you want to analyse. Must be a
+            valid "column" in the flowtuple Avro output (e.g. "dst_port",
+            "ttl").
+
+        topn: int
+            the maximum number of ranks to produce individual results for.
+            All other values of lower rank will be accumulated into the
+            "Other" category. E.g., to get the top 10 TTL values, set this
+            to 10. Set to None if you want all ranks in your results.
+
+        topbylabel: str
+            the label to use when reporting the raw numbers for a given
+            analysis, e.g. "flows" for flow counts, "packets" for packet
+            counts.
+
+        topagg: str
+            the SQL aggregation function to use to calculate the number of
+            flows/packets/etc that belong to a given metric value, e.g.
+            "SUM(packet_cnt)" would be required to count packets.
+
+        includeother: boolean
+            Set to True if you want the "Other" category included in your
+            result dictionary. Set to False to exclude it.
+
+        Returns
+        -------
+        A dictionary containing the top ranked values for the specified
+        property. For each ranked value, the dictionary will contain the
+        following entries:
+         * rank -- the rank of the value
+         * name -- the name assigned to the value
+         * '$topbylabel' -- the number of relevant entities matching the value
+         * pct -- the proportion (between 0.0 and 1.0) that matched
+                  the value
+         * cumpct -- the cumulative proportion (between 0.0 and 1.0)
+                     that matched the value and any higher-ranked values, i.e.
+                     for a value with rank 3, this will be the sum of the
+                     proportions for the values of ranks 1, 2 and 3. Useful
+                     for plotting a CDF.
+
+        """
         sqlquery = "SELECT %s, %s AS %s from flowtuples GROUP BY %s ORDER BY %s DESC" % (metric, topagg, topbylabel, metric, topbylabel)
 
         result = {}
@@ -285,8 +337,54 @@ class StardustPysparkHelper(object):
 
         return result
 
+    
     def getTopValuesByFlowCount(self, ftuples, metric, topn, includeother=True):
+        """
+        For a given flow property, such as geo-located country or destination
+        port, return the top N values for that property based on the number
+        of flows observed matching that property value.
 
+        For instance, you could use this function to determine the top 10 most
+        popular source countries or the top 20 most popular destination ports.
+
+        Parameters
+        ----------
+        ftuples: DataFrame
+            the data frame containing the flowtuple records to run the
+            query against
+
+        metric: str
+            the name of the flow property you want to analyse. Must be a
+            valid "column" in the flowtuple Avro output (e.g. "dst_port",
+            "ttl").
+
+        topn: int
+            the maximum number of ranks to produce individual results for.
+            All other values of lower rank will be accumulated into the
+            "Other" category. E.g., to get the top 10 TTL values, set this
+            to 10. Set to None if you want all ranks in your results.
+
+        includeother: boolean
+            Set to True if you want the "Other" category included in your
+            result dictionary. Set to False to exclude it.
+
+        Returns
+        -------
+        A dictionary containing the top ranked values for the specified
+        property. For each ranked value, the dictionary will contain the
+        following entries:
+         * rank -- the rank of the value
+         * name -- the name assigned to the value
+         * flows -- the number of flows matching that value
+         * pct -- the proportion (between 0.0 and 1.0) of flows that match
+                  the value
+         * cumpct -- the cumulative proportion (between 0.0 and 1.0) of flows
+                     that match the value and any higher-ranked values, i.e.
+                     for a value with rank 3, this will be the sum of the
+                     proportions for the values of ranks 1, 2 and 3. Useful
+                     for plotting a CDF.
+
+        """
         if metric not in ftuples.columns:
             return None
 
@@ -296,6 +394,52 @@ class StardustPysparkHelper(object):
     def getTopValuesByPacketCount(self, ftuples, metric, topn,
             includeother=True):
 
+        """
+        For a given flow property, such as geo-located country or destination
+        port, return the top N values for that property based on the number
+        of packets that belonged to flows matching that property value.
+
+        For instance, you could use this function to determine the top 10 most
+        popular source countries or the top 20 most popular destination ports.
+
+        Parameters
+        ----------
+        ftuples: DataFrame
+            the data frame containing the flowtuple records to run the
+            query against
+
+        metric: str
+            the name of the flow property you want to analyse. Must be a
+            valid "column" in the flowtuple Avro output (e.g. "dst_port",
+            "ttl").
+
+        topn: int
+            the maximum number of ranks to produce individual results for.
+            All other values of lower rank will be accumulated into the
+            "Other" category. E.g., to get the top 10 TTL values, set this
+            to 10. Set to None if you want all ranks in your results.
+
+        includeother: boolean
+            Set to True if you want the "Other" category included in your
+            result dictionary. Set to False to exclude it.
+
+        Returns
+        -------
+        A dictionary containing the top ranked values for the specified
+        property. For each ranked value, the dictionary will contain the
+        following entries:
+         * rank -- the rank of the value
+         * name -- the name assigned to the value
+         * packets -- the number of packets matching that value
+         * pct -- the proportion (between 0.0 and 1.0) of packets that match
+                  the value
+         * cumpct -- the cumulative proportion (between 0.0 and 1.0) of packets
+                     that match the value and any higher-ranked values, i.e.
+                     for a value with rank 3, this will be the sum of the
+                     proportions for the values of ranks 1, 2 and 3. Useful
+                     for plotting a CDF.
+
+        """
         if metric not in ftuples.columns:
             return None
 
