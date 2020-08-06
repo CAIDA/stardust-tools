@@ -1,5 +1,9 @@
 # Libtrace URI describing where to read packets from.
-inputuri: "ndag:ens11f1,225.44.0.1,44000"
+# NOTE: replace "ens3" with the name of the interface that is
+# on 10.224.0.0/16.
+# You can find this interface name by running:
+# ip a | grep 10.224 | awk '{print $(NF)}'
+inputuri: "ndag:ens3,225.44.0.1,44000"
 
 # BPF to apply to incoming packets.
 # Only packets that match this filter will be captured.
