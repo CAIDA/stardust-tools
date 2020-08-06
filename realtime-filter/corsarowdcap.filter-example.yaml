@@ -1,0 +1,34 @@
+# Libtrace URI describing where to read packets from.
+inputuri: "ndag:ens11f1,225.44.0.1,44000"
+
+# BPF to apply to incoming packets.
+# Only packets that match this filter will be captured.
+inputfilter: "icmp"
+
+# Format for output file names (output is gzip compressed)
+outtemplate: "/home/limbo/pcap/%N.%s.%f.gz"
+
+# Perform gzip compression on the output files
+compresslevel: 1
+compressmethod: "gzip"
+
+# Number of packet processing threads to use.
+threads: 8
+
+# Rotation interval
+interval: 3600
+
+# Monitor name
+monitorid: ucsd-nt
+
+# Output file format
+fileformat: "pcapfile"
+
+# Strip vlan tags before writing packets to file
+stripvlans: no
+
+# Write stats file alongside merged output file
+writestats: yes
+
+# Use a pool of 3 threads for merging interim output
+mergethreads: 3
