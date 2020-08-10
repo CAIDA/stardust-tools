@@ -67,11 +67,11 @@ class StardustPysparkHelper(object):
 
     ftrotfreq: int
         the frequency at which flowtuple output files are rotated
-        (default 3600)
+        (default 60)
 
     """
 
-    def __init__(self, bucket, source, prefix, ftrotfreq = 3600):
+    def __init__(self, bucket, source, prefix, ftrotfreq = 60):
         """
         Parameters
         ----------
@@ -88,14 +88,14 @@ class StardustPysparkHelper(object):
 
         ftrotfreq: int
             the frequency at which flowtuple output files are rotated
-            (default 3600)
+            (default 60)
 
         """
         self.spark = None
         self.bucket = bucket
         self.source = source
         self.prefix = prefix
-        self.ftrotfreq = 3600
+        self.ftrotfreq = ftrotfreq
 
     def startSparkSession(self, name):
         """
@@ -153,8 +153,8 @@ class StardustPysparkHelper(object):
                 break
 
             t = time.gmtime(roundstamp)
-            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/%s.%u.flowtuple.avro" % \
-                    (self.bucket, self.source, t[0], t[1], t[2], \
+            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/hour=%02d/%s.%u.flowtuple.avro" % \
+                    (self.bucket, self.source, t[0], t[1], t[2], t[3], \
                      self.prefix, roundstamp)
             yielded += 1
 
@@ -221,16 +221,13 @@ class StardustPysparkHelper(object):
         # First, reduce our workload by limiting the number of Avro
         # files that we try to load.
         flist = self._getFlowtupleFileList(start, end, self.ftrotfreq)
-        
-        # load each expected Avro file into its own dataframe
-        dataframes = map(lambda r: self._load_avro_file(r), flist)
-        
-        # remove dataframes for which no Avro file actually existed
-        validframes = filter(lambda x: x is not None, dataframes)
-      
-        # if there are no valid dataframes, return an empty one
-        #if (all(False for _ in validframes)):
-        #    return empty
+
+        # Remove any dataframes where no Avro file has existed
+        validframes = []
+        for r in flist:
+            frame = self._load_avro_file(r)
+            if frame is not None:
+                validframes.append(frame)
 
         # combine the remaining dataframes into a single dataframe
         unioned = None
