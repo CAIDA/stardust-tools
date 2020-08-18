@@ -21,17 +21,17 @@ directory containing the tracekentik source code.
 Running
 =======
 
- - To stream the "Mini-NT" nDAG data:
+To stream the "Mini-NT" nDAG data:
 ```
 tracekentik -s 1 -t 8 ndag:ens4,225.44.0.2,44000 127.0.0.1:8343
 ```
 
- - To stream the full telescope:
+To stream the full telescope:
 ```
 tracekentik -s 10 -t 8 ndag:ens4,225.44.0.1,44000 127.0.0.1:8343
 ```
 
- - To stream a file:
+To stream a file:
 ```
 tracekentik -s 10 -t 0 pcapfile:/path/to/pcapfile 127.0.0.1:8343
 ```
