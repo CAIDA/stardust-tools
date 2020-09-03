@@ -12,14 +12,16 @@ wherever possible so that users can process large quantities of network traffic
 quickly and efficiently.
 
 corsarotrace allows users to run their custom analysis routines through a
-plugin-based system. The plugins must be written using the C programming
+[plugin-based system](https://github.com/CAIDA/corsaro3/tree/master/libcorsaro/plugins). 
+The plugins must be written using the C programming
 language and will need to provide callback functions for a set of pre-defined
 events. See below for more details on how to write a corsarotrace plugin.
 
 This guide is aimed at new users who are using corsarotrace for the first
 time and want to learn how to write simple plugins. Advanced users who want
 to write more complicated plugins or need to leverage the full capabilities
-of corsaro should also look at README-Advanced.md.
+of corsaro should also look at 
+[README-Advanced.md](https://github.com/CAIDA/stardust-tools/blob/corsarotrace-users/corsarotrace-users/README-Advanced.md).
 
 ## Configuring corsarotrace
 
@@ -27,8 +29,8 @@ corsarotrace is configured using a YAML file. The syntax of YAML is beyond the
 scope of this document, but can be easily learned through any number of
 websites.
 
-An example YAML configuration file for corsarotrace is included with this
-README (it is called `corsarotrace-example.yaml`).
+An [example YAML configuration file](https://github.com/CAIDA/stardust-tools/blob/corsarotrace-users/corsarotrace-users/corsarotrace-example.yaml)
+for corsarotrace is included with this README.
 
 The corsarotrace configuration includes the following top-level options,
 which can be specified using a basic `key: value` syntax:
@@ -126,8 +128,10 @@ following command
 
 ## Writing a plugin
 
-TODO
+``TODO``: This section still needs to be edited.
+
+In the meantime please check the following hello-world example https://github.com/CAIDA/corsaro3/blob/master/libcorsaro/plugins/corsaro_null.c and https://github.com/CAIDA/corsaro3/blob/master/libcorsaro/plugins/corsaro_null.h 
 
 ## Installing your plugin
 
-TODO
+``TODO``
