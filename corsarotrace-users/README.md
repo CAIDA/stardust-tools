@@ -130,8 +130,9 @@ following command
 
 ``TODO``: This section still needs to be edited.
 
-In the meantime please check the following hello-world example https://github.com/CAIDA/corsaro3/blob/master/libcorsaro/plugins/corsaro_null.c and https://github.com/CAIDA/corsaro3/blob/master/libcorsaro/plugins/corsaro_null.h 
-
+In the meantime please check the following hello-world example https://github.com/CAIDA/stardust-tools/blob/corsarotrace-users/corsarotrace-users/example_plugin.c
+ and https://github.com/CAIDA/stardust-tools/blob/corsarotrace-users/corsarotrace-users/example_plugin.h
+ 
 ## Installing your plugin
 
 ``TODO``
