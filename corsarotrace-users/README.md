@@ -158,6 +158,18 @@ In this example, the plugin source and header files are located at
 ```cp /home/limbo/example_plugin.[ch] /home/limbo/corsaro3/libcorsaro/plugins```
 
 
+ * Update `configure.ac` to ensure that your plugin is recognised as loadable
+   by corsarotrace. Find a series of lines calling the macro
+   `ED_WITH_PLUGIN` and add an entry for your new plugin. The name in the
+   first argument must match the name of plugin source file minus its
+   extension. The second argument should match the plugin name defined in
+   the source file. The third argument must be unique to that plugin and
+   should be capitalized. The final argument should be set to `yes` to
+   signify that the plugin should be enabled. For our example plugin, we
+   would use:
+
+```ED_WTIH_PLUGIN([example_plugin],[exampleplugin],[EXAMPLE],[yes])```
+
  * Update the `Makefile.am` file in `libcorsaro/plugins` to tell the build
    system to compile your plugin. Place lines like the ones given below just prior to line beginning with `libcorsaroplugins_la_SOURCES =` :
 
@@ -227,3 +239,7 @@ your plugin and run corsarotrace!
    exactly matches the name defined in your plugin source code, e.g. for the
    example plugin, the name was defined as `exampleplugin` and declared as
    such in the `corsaro_plugin_t` structure.
+ * If corsarotrace doesn't think your plugin exists, make sure that you've
+   correctly added the `ED_WITH_PLUGIN` statement to the `configure.ac` file.
+   If you modify this file after installing, you will need to re-run the
+   build starting from the `./bootstrap.sh` instruction described above.
