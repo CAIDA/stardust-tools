@@ -167,7 +167,8 @@ include_HEADERS+=example_plugin.h
 ```
 
  * Add an entry to the `corsaro_plugin_id_t` enumerated type for your new
-   plugin. The enum name must match the `CORSARO_PLUGIN_ID_` name that you
+   plugin. The enumerated type is declared in `libcorsaro/libcorsaro_plugin.h`.
+   The enum name must match the `CORSARO_PLUGIN_ID_` name that you
    used in your plugin source code. The value must be an unused number less
    than the value of `CORSARO_PLUGIN_ID_MAX` (or update the value of `MAX`
    to be your new value).
