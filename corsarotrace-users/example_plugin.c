@@ -5,7 +5,7 @@
 #include "libcorsaro.h"
 #include "libcorsaro_plugin.h"
 #include "libcorsaro_common.h"
-#include "corsaro_example.h"
+#include "example_plugin.h"
 
 #define CORSARO_EXAMPLE_MAGIC 0x41424344
 #define PLUGIN_NAME "exampleplugin"
@@ -42,7 +42,7 @@ static corsaro_plugin_t corsaro_example_plugin = {
 /* This function just needs to return an instance of the corsaro_plugin_t
  * structure defined above.
  */
-corsaro_plugin_t *corsaro_example_alloc(void) {
+corsaro_plugin_t *example_plugin_alloc(void) {
     return &corsaro_example_plugin;
 }
 
@@ -256,10 +256,16 @@ int corsaro_example_merge_interval_results(corsaro_plugin_t *p, void *local,
         void **tomerge, corsaro_fin_interval_t *fin, void *tagsock) {
 
     int i;
+    uint64_t *state = (uint64_t *)local;
     *state = 0;
     for (i = 0; i < fin->threads_ended; i++) {
         uint64_t *val = (uint64_t *)(tomerge[i]);
         (*state) += (*val);
+
+        /* make sure to free each result value, as this was malloced by
+         * its processing thread.
+         */
+        free(val);
     }
     corsaro_log(p->logger, "combined total was %lu packets this interval", *state);
     return 0;
