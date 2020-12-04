@@ -1,0 +1,25 @@
+# Example config file to run corsarotrace with the example plugin
+#
+# Assumes you've copied the plugin source into the correct location
+# in the corsaro source tree and rebuilt the corsaro software. See the
+# README for more details on how to do this.
+#
+# For more detailed descriptions of the meanings of the configuration
+# options in this file, also consult the README.
+
+logfilename: "/tmp/corsarotrace.log"
+interval: 60            # produce results every 60 seconds
+rotatefreq: 15          # rotate any output files every 15 intervals (minutes)
+threads: 8              # use 8 packet processing threads
+
+# If all set to 'no' then no packets will be removed by filtering
+removerouted: no
+removespoofed: no
+removeerratic: no
+removenotscan: no
+
+packetsource: "ndag:ens4,225.44.0.1,44000"
+
+plugins:
+ - example:
+     # if we had additional example-specific config it would go here
