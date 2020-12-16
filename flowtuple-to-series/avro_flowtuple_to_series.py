@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 from fastavro import reader
+from kafka import KafkaProducer
 import sys, wandio
 
 def usage(prog):
@@ -155,7 +156,7 @@ def update_netacq_continent_metric(mvals, r):
     update_single_metric(mvals, key, r)
 
 def update_netacq_country_metric(mvals, r):
-    key = r['netacq_country']
+    key = "%s.%s" % (r['netacq_continent'], r['netacq_country'])
     update_single_metric(mvals, key, r)
 
 def update_summary_metric(mvals, r):
@@ -202,26 +203,88 @@ def update_metric_counters(mmap, metrics, r):
             update_netacq_continent_metric(mmap['netacq_continents'], r)
             update_netacq_country_metric(mmap['netacq_countries'], r)
 
+
+def create_kafka_msg_header(channel, timestamp):
+    i = len(channel)
+    x = int(timestamp)
+
+    hdr = bytearray(b'TSKBATCH')    # magic
+    hdr.append(0)       # version
+    hdr += bytearray(x.to_bytes(4, byteorder='big', signed=False)) # time
+    hdr += bytearray(i.to_bytes(2, byteorder='big', signed=False)) # channel len
+    hdr += bytearray(channel.encode('utf-8'))     # channel string
+
+    return hdr
+
+def encode_kafka_msg_kvalue(prefix, family, key, countername, value):
+    barry = bytearray()
+
+    if family == "traffic.icmp":
+        icmptype = key.split(':')[0]
+        icmpcode = key.split(':')[1]
+        rkey = "%s.%s.type.%s.code.%s.%s" % (prefix, family, icmptype, icmpcode, countername)
+    elif key is None:
+        rkey = "%s.%s.%s" % (prefix, family, countername)
+    else:
+        rkey = "%s.%s.%s.%s" % (prefix, family, key, countername)
+
+    i = len(rkey)
+    print(rkey)
+
+    barry += bytearray(i.to_bytes(2, byteorder='big', signed=False))
+    barry += bytearray(rkey.encode('utf-8'))
+    barry += bytearray(value.to_bytes(8, byteorder='big', signed=False))
+    return barry
+
+
+def convert_metric_to_kafka_key(metric):
+    if metric == "summary":
+        return "overall"
+    if metric == "ipprotocol":
+        return "traffic.protocol"
+    if metric == "tcp_src_ports":
+        return "traffic.port.tcp.src"
+    if metric == "tcp_dst_ports":
+        return "traffic.port.tcp.dst"
+    if metric == "udp_src_ports":
+        return "traffic.port.udp.src"
+    if metric == "udp_dst_ports":
+        return "traffic.port.udp.dst"
+    if metric == "asn":
+        return "routing.asn"
+    if metric == "icmp":
+        return "traffic.icmp"
+    if metric == "netacq_continents":
+        return "geo.netacuity"
+    if metric == "netacq_countries":
+        return "geo.netacuity"
+
 def output_counters(mmap):
-    print("output_counters for %u", lastinterval)
+    print("output_counters for %u" % lastinterval)
+    producer = KafkaProducer(bootstrap_servers='localhost:9092', compression_type='snappy')
+    topic = "testing.channelname"
+    prefix = "reptest"
+
+    header = create_kafka_msg_header("channelname", int(lastinterval))
+
     for metric, mvals in mmap.items():
+        kkeymet = convert_metric_to_kafka_key(metric)
+
         if metric == "summary":
-            key = "overall"
-            print("%u %s %s packets %lu" % (lastinterval, metric, key, mvals['packets']))
-            print("%u %s %s bytes %lu" % (lastinterval, metric, key, mvals['bytes']))
-            print("%u %s %s uniq_src_ips %lu" % (lastinterval, metric, key, len(mvals['uniq_src_ips'])))
-            print("%u %s %s uniq_dst_ips %lu" % (lastinterval, metric, key, len(mvals['uniq_dst_ips'])))
-            print("%u %s %s uniq_src_asns %lu" % (lastinterval, metric, key, len(mvals['uniq_src_asns'])))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "packets", mvals['packets'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "bytes", mvals['bytes'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_ips", len(mvals['uniq_src_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_dst_ips", len(mvals['uniq_dst_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_asns", len(mvals['uniq_src_asns']))
 
             continue
 
         for key, counters in mvals.items():
-            # TODO write output to kafka
-            print("%u %s %s packets %lu" % (lastinterval, metric, key, counters['packets']))
-            print("%u %s %s bytes %lu" % (lastinterval, metric, key, counters['bytes']))
-            print("%u %s %s uniq_src_ips %lu" % (lastinterval, metric, key, len(counters['uniq_src_ips'])))
-            print("%u %s %s uniq_dst_ips %lu" % (lastinterval, metric, key, len(counters['uniq_dst_ips'])))
-            print("%u %s %s uniq_src_asns %lu" % (lastinterval, metric, key, len(counters['uniq_src_asns'])))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "packets", counters['packets'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "bytes", counters['bytes'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_ips", len(counters['uniq_src_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_dst_ips", len(counters['uniq_dst_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_asns", len(counters['uniq_src_asns']))
 
 
 try:
@@ -252,7 +315,7 @@ try:
         avro_reader = reader(fh)
         for record in avro_reader:
             if lastinterval == 0:
-                lastinterval = record['time']
+                lastinterval = int(record['time'])
                 mmap = reset_counters(metrics)
 
             if should_ignore_record(record, mode):
@@ -261,7 +324,7 @@ try:
             if record['time'] != lastinterval:
                 output_counters(mmap)
                 mmap = reset_counters(metrics)
-                lastinterval = record["time"]
+                lastinterval = int(record["time"])
 
             update_metric_counters(mmap, metrics, record)
 
