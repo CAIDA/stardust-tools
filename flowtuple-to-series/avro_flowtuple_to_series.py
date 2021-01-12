@@ -261,27 +261,31 @@ def convert_metric_to_kafka_key(metric):
 def output_counters(producer, mmap, topic, prefix, channel):
     print("output_counters for %u" % lastinterval)
 
+    header = create_kafka_msg_header(channel, int(lastinterval))
     for metric, mvals in mmap.items():
         kkeymet = convert_metric_to_kafka_key(metric)
 
-        header = create_kafka_msg_header(channel, int(lastinterval))
-
         if metric == "summary":
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "pkt_cnt", mvals['packets'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "ip_len", mvals['bytes'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_ip", len(mvals['uniq_src_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_dst_ip", len(mvals['uniq_dst_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_asn", len(mvals['uniq_src_asns']))
-            producer.send(topic, header)
+            msg = bytearray()
+            msg += header
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, None, "pkt_cnt", mvals['packets'])
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, None, "ip_len", mvals['bytes'])
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_ip", len(mvals['uniq_src_ips']))
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_dst_ip", len(mvals['uniq_dst_ips']))
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_asn", len(mvals['uniq_src_asns']))
+            producer.send(topic, msg)
             continue
 
         for key, counters in mvals.items():
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "pkt_cnt", counters['packets'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "ip_len", counters['bytes'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_ip", len(counters['uniq_src_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_dst_ip", len(counters['uniq_dst_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_asn", len(counters['uniq_src_asns']))
-        producer.send(topic, header)
+            msg = bytearray()
+            msg += header
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, key, "pkt_cnt", counters['packets'])
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, key, "ip_len", counters['bytes'])
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_ip", len(counters['uniq_src_ips']))
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_dst_ip", len(counters['uniq_dst_ips']))
+            msg += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_asn", len(counters['uniq_src_asns']))
+
+            producer.send(topic, msg)
 
 parser = argparse.ArgumentParser(description="Translates corsaro3 flowtuples into corsaro3 time series")
 
