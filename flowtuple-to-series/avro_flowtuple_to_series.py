@@ -2,7 +2,7 @@
 
 from fastavro import reader
 from kafka import KafkaProducer
-import sys, wandio
+import sys, wandio, argparse
 
 def usage(prog):
     print("Usage for %s" % (prog), file=sys.stderr)
@@ -229,7 +229,6 @@ def encode_kafka_msg_kvalue(prefix, family, key, countername, value):
         rkey = "%s.%s.%s.%s" % (prefix, family, key, countername)
 
     i = len(rkey)
-    print(rkey)
 
     barry += bytearray(i.to_bytes(2, byteorder='big', signed=False))
     barry += bytearray(rkey.encode('utf-8'))
@@ -259,42 +258,47 @@ def convert_metric_to_kafka_key(metric):
     if metric == "netacq_countries":
         return "geo.netacuity"
 
-def output_counters(mmap):
+def output_counters(producer, mmap, topic, prefix, channel):
     print("output_counters for %u" % lastinterval)
-    producer = KafkaProducer(bootstrap_servers='localhost:9092', compression_type='snappy')
-    topic = "testing.channelname"
-    prefix = "reptest"
-
-    header = create_kafka_msg_header("channelname", int(lastinterval))
 
     for metric, mvals in mmap.items():
         kkeymet = convert_metric_to_kafka_key(metric)
 
-        if metric == "summary":
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "packets", mvals['packets'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "bytes", mvals['bytes'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_ips", len(mvals['uniq_src_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_dst_ips", len(mvals['uniq_dst_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_asns", len(mvals['uniq_src_asns']))
+        header = create_kafka_msg_header(channel, int(lastinterval))
 
+        if metric == "summary":
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "pkt_cnt", mvals['packets'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "ip_len", mvals['bytes'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_ip", len(mvals['uniq_src_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_dst_ip", len(mvals['uniq_dst_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, None, "uniq_src_asn", len(mvals['uniq_src_asns']))
+            producer.send(topic, header)
             continue
 
         for key, counters in mvals.items():
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "packets", counters['packets'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "bytes", counters['bytes'])
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_ips", len(counters['uniq_src_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_dst_ips", len(counters['uniq_dst_ips']))
-            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_asns", len(counters['uniq_src_asns']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "pkt_cnt", counters['packets'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "ip_len", counters['bytes'])
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_ip", len(counters['uniq_src_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_dst_ip", len(counters['uniq_dst_ips']))
+            header += encode_kafka_msg_kvalue(prefix, kkeymet, key, "uniq_src_asn", len(counters['uniq_src_asns']))
+        producer.send(topic, header)
 
+parser = argparse.ArgumentParser(description="Translates corsaro3 flowtuples into corsaro3 time series")
 
-try:
-    mode = sys.argv[2]
-except:
-    usage(sys.argv[0])
+parser.add_argument("sourcefile", help="the flowtuple file to process")
+parser.add_argument('-m', '--mode', default="unfiltered", help="the filtering mode to apply (unfiltered, unfiltered-ipmeta, nonspoofed, etc.)")
+parser.add_argument('-t', '--topic', help="the kafka topic to publish to")
+parser.add_argument('-c', '--channel', help="the kafka channel to publish to")
+parser.add_argument('-p', '--prefix', help="the prefix to prepend to each kafka message")
+parser.add_argument('-k', '--kafkaserver', help="the kafka bootstrap server to connect to")
+
+args = parser.parse_args()
+mode = args.mode
 
 if mode not in ["unfiltered", "unfiltered-ipmeta", "nonspoofed", "unrouted-nonspoofed"]:
         print("Invalid filtering mode: %s" % (mode))
-        usage(sys.argv[0])
+        parser.print_help()
+        sys.exit(0)
 
 if mode == "unfiltered":
     metrics = ['summary', 'ipprotocol', 'tcpports', 'udpports', 'icmp']
@@ -309,9 +313,11 @@ else:
 lastinterval = 0
 mmap = {}
 
+producer = KafkaProducer(bootstrap_servers=args.kafkaserver,
+        compression_type='snappy')
 
 try:
-    with wandio.open(sys.argv[1]) as fh:
+    with wandio.open(args.sourcefile) as fh:
         avro_reader = reader(fh)
         for record in avro_reader:
             if lastinterval == 0:
@@ -322,7 +328,8 @@ try:
                 continue
 
             if record['time'] != lastinterval:
-                output_counters(mmap)
+                output_counters(producer, mmap, args.topic, args.prefix,
+                        args.channel)
                 mmap = reset_counters(metrics)
                 lastinterval = int(record["time"])
 
@@ -331,9 +338,9 @@ try:
             #print(record)
 
 except IOError as err:
-    print(sys.argv[1])
     raise(err)
 
-output_counters(mmap)
+output_counters(producer, mmap, args.topic, args.prefix, args.channel)
+producer.close()
 
 # vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
