@@ -64,13 +64,25 @@ static void encode_oldft_as_avro(flowtuple_data_t *ft,
         return;
     }
 
-    val32 = flowtuple_data_get_src_ip(ft);
+    /* libflowtuple gives us the IPs in network byte order UNLESS
+     * the dest IP is written in the /8 format. In that case, it ends up
+     * being returned in host byte order, because of an oversight in
+     * libflowtuple.
+     *
+     * We could try and fix libflowtuple, but it is easier for now for
+     * us to simply try and account for the discrepancy.
+     */
+    val32 = ntohl(flowtuple_data_get_src_ip(ft));
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
         return;
     }
 
-    val32 = flowtuple_data_get_dest_ip(ft) | 0x2c000000;
+    if (flowtuple_data_is_slash_eight(ft)) {
+        val32 = flowtuple_data_get_dest_ip(ft) | 0x2c000000;
+    } else {
+        val32 = ntohl(flowtuple_data_get_dest_ip(ft));
+    }
 
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
