@@ -1,5 +1,5 @@
 TARGET = ftconvert
-LIBS = -lwandio -lflowtuple -lcorsaro -ltrace
+LIBS = -lwandio -lflowtuple -lcorsaro -ltrace -lJudy
 CC = gcc
 CFLAGS = -g -Wall -O2
 
