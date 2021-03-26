@@ -9,35 +9,9 @@
 #include <flowtuple.h>
 #include <libcorsaro_avro.h>
 #include <libcorsaro_log.h>
+#include <libcorsaro_flowtuple.h>
 
 #define MAX_QUALITY_VALUES 5
-
-static const char FLOWTUPLE_RESULT_SCHEMA[] =
-"{\"type\": \"record\",\
-  \"namespace\":\"org.caida.corsaro\",\
-  \"name\":\"flowtuple\",\
-  \"doc\":\"A Corsaro FlowTuple record. All byte fields are in network byte order.\",\
-  \"fields\":[\
-      {\"name\": \"time\", \"type\": \"long\"}, \
-      {\"name\": \"src_ip\", \"type\": \"long\"}, \
-      {\"name\": \"dst_ip\", \"type\": \"long\"}, \
-      {\"name\": \"src_port\", \"type\": \"int\"}, \
-      {\"name\": \"dst_port\", \"type\": \"int\"}, \
-      {\"name\": \"protocol\", \"type\": \"int\"}, \
-      {\"name\": \"ttl\", \"type\": \"int\"}, \
-      {\"name\": \"tcp_flags\", \"type\": \"int\"}, \
-      {\"name\": \"ip_len\", \"type\": \"int\"}, \
-      {\"name\": \"tcp_synlen\", \"type\": \"int\"}, \
-      {\"name\": \"tcp_synwinlen\", \"type\": \"int\"}, \
-      {\"name\": \"packet_cnt\", \"type\": \"long\"}, \
-      {\"name\": \"is_spoofed\", \"type\": \"int\"}, \
-      {\"name\": \"is_masscan\", \"type\": \"int\"}, \
-      {\"name\": \"maxmind_continent\", \"type\": \"string\"}, \
-      {\"name\": \"maxmind_country\", \"type\": \"string\"}, \
-      {\"name\": \"netacq_continent\", \"type\": \"string\"}, \
-      {\"name\": \"netacq_country\", \"type\": \"string\"}, \
-      {\"name\": \"prefix2asn\", \"type\": \"long\"} \
-      ]}";
 
 static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
 "{\"type\": \"record\",\
@@ -76,16 +50,33 @@ static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
     ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
     ((uint16_t)ntohs(flowtuple_data_get_dest_port(ft))))
 
+#define FT3_KEY(ft) \
+    ((((uint64_t)(ft.src_ip)) << 32) | \
+    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    ((uint16_t)ft.dst_port))
+
 #define FT_ICMP_KEY(ft) \
     ((((uint64_t)(ntohl(flowtuple_data_get_src_ip(ft)))) << 32) | \
     ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
     (((uint16_t)ntohs(flowtuple_data_get_src_port(ft))) << 8) | \
     ((uint16_t)ntohs(flowtuple_data_get_dest_port(ft))))
 
+#define FT3_ICMP_KEY(ft) \
+    ((((uint64_t)(ft.src_ip)) << 32) | \
+    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    (((uint16_t)ft.src_port) << 8) | \
+    ((uint16_t)ft.dst_port))
+
+
 #define FT_OTHER_KEY(ft) \
     ((((uint64_t)(ntohl(flowtuple_data_get_src_ip(ft)))) << 32) | \
     ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
     (flowtuple_data_get_protocol(ft)))
+
+#define FT3_OTHER_KEY(ft) \
+    ((((uint64_t)(ft.src_ip)) << 32) | \
+    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    (ft.protocol))
 
 static inline double QUALITY_RATIO(uint32_t portcnt, uint64_t pkts) {
     if (pkts < 10) {
@@ -128,6 +119,12 @@ typedef struct ft_state {
     Pvoid_t tcpflags;       // TCP only
     Pvoid_t pktsizes;
     uint64_t totalpackets;
+
+    uint16_t tcpsynlen;
+    uint16_t tcpsynwinlen;
+    uint32_t prefix2asn;
+    uint16_t netacq_continent;
+    uint16_t netacq_country;
 } flowtupleState;
 
 struct ftconverter {
@@ -142,9 +139,10 @@ struct ftconverter {
 
 static void usage(char *prog) {
     fprintf(stderr, "Usage for %s\n\n", prog);
-    fprintf(stderr, "\t%s -i <inputfile> -o <outputfile>\n", prog);
-    fprintf(stderr, "\n<inputfile> must be an old corsaro2 flowtuple file\n");
-    fprintf(stderr, "\n<outputfile> will be an avro file using the corsaro3 flowtuple schema\n");
+    fprintf(stderr, "\t%s -V <version> -i <inputfile> -o <outputfile>\n", prog);
+    fprintf(stderr, "\n<version> must be set to the flowtuple version of the srouce file\n");
+    fprintf(stderr, "\n<inputfile> must be a flowtuple version 2 or 3 file\n");
+    fprintf(stderr, "\n<outputfile> will be an avro file using the flowtuple version 4 format\n");
 }
 
 static inline uint32_t find_quality(struct ftconverter *ftdata, Pvoid_t *map,
@@ -174,7 +172,7 @@ static inline uint32_t find_quality(struct ftconverter *ftdata, Pvoid_t *map,
 }
 
 
-static void encode_flowtuple_as_avro(flowtupleState *ft, Word_t key,
+static void encode_flowtuple4_avro(flowtupleState *ft, Word_t key,
         uint8_t proto, struct ftconverter *convdata) {
 
     uint64_t val64;
@@ -186,6 +184,7 @@ static void encode_flowtuple_as_avro(flowtupleState *ft, Word_t key,
     uint32_t qualused;
     Word_t destipcnt = 0, srcportcnt = 0, ttlcnt = 0, tcpflagcnt = 0;
     Word_t pktsizecnt = 0;
+    char valspace[3];
 
     if (corsaro_start_avro_encoding(convdata->avrow) < 0) {
         return;
@@ -268,14 +267,14 @@ static void encode_flowtuple_as_avro(flowtupleState *ft, Word_t key,
     }
 
     /* TCP SYN len, which is not present in old FT records */
-    val32 = (uint32_t)0;
+    val32 = (uint32_t)ft->tcpsynlen;
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
         return;
     }
 
     /* TCP initial Rwin, which is not present in old FT records */
-    val32 = (uint32_t)0;
+    val32 = (uint32_t)ft->tcpsynwinlen;
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
         return;
@@ -325,17 +324,25 @@ static void encode_flowtuple_as_avro(flowtupleState *ft, Word_t key,
         return;
     }
 
+    valspace[0] = (char)(ft->netacq_continent & 0xff);
+    valspace[1] = (char)((ft->netacq_continent >> 8) & 0xff);
+    valspace[2] = '\0';
+
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_STRING,
-                "??", 2) < 0) {
+                valspace, 2) < 0) {
         return;
     }
+    valspace[0] = (char)(ft->netacq_country & 0xff);
+    valspace[1] = (char)((ft->netacq_country >> 8) & 0xff);
+    valspace[2] = '\0';
+
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_STRING,
-                "??", 2) < 0) {
+                valspace, 2) < 0) {
         return;
     }
 
     /* source ASN */
-    val32 = 0;
+    val32 = ft->prefix2asn;
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
         return;
@@ -367,11 +374,11 @@ static void write_tuples(struct ftconverter *ftdata, Pvoid_t *tuples,
         state = (flowtupleState *)(*pval);
 
         if (proto == 6 || proto == 17 || proto == 1) {
-            encode_flowtuple_as_avro(state, key, proto, ftdata);
+            encode_flowtuple4_avro(state, key, proto, ftdata);
         } else {
             uint8_t protocol;
             protocol = KEY_TO_PROTOCOL(key);
-            encode_flowtuple_as_avro(state, key, protocol, ftdata);
+            encode_flowtuple4_avro(state, key, protocol, ftdata);
         }
 
         J1FA(rcint, state->destips);
@@ -384,7 +391,7 @@ static void write_tuples(struct ftconverter *ftdata, Pvoid_t *tuples,
     JLFA(rcint, *tuples);
 }
 
-static void update_tuples(struct ftconverter *ftdata, Pvoid_t *tuples,
+static void update_tuples_ft2(struct ftconverter *ftdata, Pvoid_t *tuples,
         flowtuple_data_t *ft, uint8_t proto) {
 
     Word_t key;
@@ -407,6 +414,11 @@ static void update_tuples(struct ftconverter *ftdata, Pvoid_t *tuples,
 
     if (!pval) {
         state = calloc(1, sizeof(flowtupleState));
+        state->tcpsynlen = 0;
+        state->tcpsynwinlen = 0;
+        state->prefix2asn = 0;
+        state->netacq_continent = ((uint16_t)'?') + (((uint16_t)'?') << 8);
+        state->netacq_country = ((uint16_t)'?') + (((uint16_t)'?') << 8);
         JLI(pval, *tuples, key);
         *pval = (Word_t)state;
     } else {
@@ -435,8 +447,92 @@ static void update_tuples(struct ftconverter *ftdata, Pvoid_t *tuples,
 
 }
 
+static void convert_ft3(corsaro_avro_reader_t *avreader,
+        struct ftconverter *ftdata) {
 
-static void convert_ft(flowtuple_record_t *record, void *args) {
+    struct corsaro_flowtuple_data ft3;
+    int ret = 1;
+    avro_value_t *record;
+    uint8_t proto;
+    Word_t key;
+    PWord_t pval;
+    flowtupleState *state = NULL;
+    int rcint;
+    uint32_t packets;
+    Pvoid_t *tuples;
+
+    while (1) {
+        ret = corsaro_read_next_avro_record(avreader, &record);
+        if (ret <= 0) {
+            break;
+        }
+
+        decode_flowtuple_from_avro(record, &ft3);
+
+        if (ft3.interval_ts != ftdata->interval) {
+            if (ftdata->interval != 0 && ftdata->writereq != 0) {
+                write_tuples(ftdata, &ftdata->icmp_tuples, 1);
+                write_tuples(ftdata, &ftdata->tcp_tuples, 6);
+                write_tuples(ftdata, &ftdata->udp_tuples, 17);
+                write_tuples(ftdata, &ftdata->other_tuples, 0);
+                ftdata->writereq = 0;
+                fprintf(stderr, "interval %u complete\n", ftdata->interval);
+            }
+            ftdata->interval = ft3.interval_ts;
+        }
+
+        ftdata->writereq = 1;
+        proto = ft3.protocol;
+        packets = ft3.packet_cnt;
+
+        if (proto == 6) {
+            tuples = &(ftdata->tcp_tuples);
+            key = FT3_KEY(ft3);
+        } else if (proto == 17) {
+            tuples = &(ftdata->udp_tuples);
+            key = FT3_KEY(ft3);
+        } else if (proto == 1) {
+            tuples = &(ftdata->icmp_tuples);
+            key = FT3_ICMP_KEY(ft3);
+        } else {
+            tuples = &(ftdata->other_tuples);
+            key = FT3_OTHER_KEY(ft3);
+        }
+
+        JLG(pval, *tuples, key);
+
+        if (!pval) {
+            state = calloc(1, sizeof(flowtupleState));
+            state->tcpsynlen = ft3.tcp_synlen;
+            state->tcpsynwinlen = ft3.tcp_synwinlen;
+            state->prefix2asn = ft3.prefixasn;
+            state->netacq_country = ft3.netacq_country;
+            state->netacq_continent = ft3.netacq_continent;
+            JLI(pval, *tuples, key);
+            *pval = (Word_t)state;
+        } else {
+            state = (flowtupleState *)(*pval);
+        }
+
+        key = (ft3.dst_ip) & 0x0000FFFF;
+        J1S(rcint, state->destips, key);
+
+        if (proto == 6) {
+            update_single(&(state->srcports), ft3.src_port, packets);
+            update_single(&(state->tcpflags), ft3.tcp_flags, packets);
+        } else if (proto == 17) {
+            update_single(&(state->srcports), ft3.src_port, packets);
+        }
+
+        update_single(&(state->ttls), ft3.ttl, packets);
+        update_single(&(state->pktsizes), ft3.ip_len, packets);
+
+        state->totalpackets += packets;
+    }
+
+}
+
+static void convert_ft2(flowtuple_record_t *record, void *args) {
     struct ftconverter *ftdata = (struct ftconverter *)args;
     flowtuple_record_type_t type = flowtuple_record_get_type(record);
     flowtuple_interval_t *ival;
@@ -445,7 +541,7 @@ static void convert_ft(flowtuple_record_t *record, void *args) {
 
     switch(type) {
         case FLOWTUPLE_RECORD_TYPE_INTERVAL:
-            /* dump all saved flowtuples TODO */
+            /* dump all saved flowtuples */
             if (ftdata->interval != 0 && ftdata->writereq != 0) {
                 write_tuples(ftdata, &ftdata->icmp_tuples, 1);
                 write_tuples(ftdata, &ftdata->tcp_tuples, 6);
@@ -462,22 +558,16 @@ static void convert_ft(flowtuple_record_t *record, void *args) {
 
             proto = flowtuple_data_get_protocol(data);
             if (proto == 1) {
-                update_tuples(ftdata, &(ftdata->icmp_tuples), data, proto);
+                update_tuples_ft2(ftdata, &(ftdata->icmp_tuples), data, proto);
             } else if (proto == 6) {
-                update_tuples(ftdata, &(ftdata->tcp_tuples), data, proto);
+                update_tuples_ft2(ftdata, &(ftdata->tcp_tuples), data, proto);
             } else if (proto == 17) {
-                update_tuples(ftdata, &(ftdata->udp_tuples), data, proto);
+                update_tuples_ft2(ftdata, &(ftdata->udp_tuples), data, proto);
             } else {
-                update_tuples(ftdata, &(ftdata->other_tuples), data, proto);
+                update_tuples_ft2(ftdata, &(ftdata->other_tuples), data, proto);
             }
 
             ftdata->writereq = 1;
-            /*
-            encode_oldft_as_avro(data, ftdata);
-            if (corsaro_append_avro_writer(ftdata->avrow, NULL) < 0) {
-
-            }
-            */
             break;
     }
 
@@ -487,21 +577,24 @@ int main(int argc, char **argv) {
 
     flowtuple_handle_t *h = NULL;
     flowtuple_errno_t fterr;
+    corsaro_avro_reader_t *avreader = NULL;
 
     char *inputfile = NULL;
     char *outputfile = NULL;
     corsaro_logger_t *logger = NULL;
     struct ftconverter ftdata;
+    uint32_t srcversion = 2;
 
     int c, ret = 0;
     const struct option long_opts[] = {
         { "help", no_argument, NULL, 'h' },
         { "input", required_argument, NULL, 'i' },
         { "output", required_argument, NULL, 'o' },
+        { "srcversion", required_argument, NULL, 'V' },
         { NULL, 0, NULL, 0 },
     };
 
-    while ((c = getopt_long(argc, argv, ":hi:o:", long_opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, ":hi:o:V:", long_opts, NULL)) != -1) {
         switch(c) {
             case 'h':
                 usage(argv[0]);
@@ -511,6 +604,9 @@ int main(int argc, char **argv) {
                 break;
             case 'o':
                 outputfile = strdup(optarg);
+                break;
+            case 'V':
+                srcversion = strtoul(optarg, NULL, 0);
                 break;
             default:
                 usage(argv[0]);
@@ -531,9 +627,21 @@ int main(int argc, char **argv) {
         goto endmain;
     }
 
+    if (srcversion != 2 && srcversion != 3) {
+        fprintf(stderr, "Invalid srcversion: %u, must be either 2 or 3\n",
+                srcversion);
+        usage(argv[0]);
+        goto endmain;
+    }
+
+
     logger = init_corsaro_logger("ftconvert", "");
 
     ftdata.avrow = corsaro_create_avro_writer(logger, NEW_FLOWTUPLE_RESULT_SCHEMA);
+    if (ftdata.avrow == NULL) {
+        fprintf(stderr, "Unable to create Avro writer\n");
+        goto endmain;
+    }
     if (corsaro_start_avro_writer(ftdata.avrow, outputfile, 0) == -1) {
         fprintf(stderr, "Error starting Avro writer\n");
         goto endmain;
@@ -546,12 +654,24 @@ int main(int argc, char **argv) {
     ftdata.other_tuples = NULL;
     ftdata.writereq = 0;
 
-    h = flowtuple_initialize(inputfile, &fterr);
-    flowtuple_loop(h, -1, convert_ft, &ftdata);
+    if (srcversion == 2) {
+        h = flowtuple_initialize(inputfile, &fterr);
+        flowtuple_loop(h, -1, convert_ft2, &ftdata);
+    } else {
+        avreader = corsaro_create_avro_reader(logger, inputfile);
+        if (avreader == NULL) {
+            fprintf(stderr, "Error starting Avro reader\n");
+            goto endmain;
+        }
+        convert_ft3(avreader, &ftdata);
+    }
 
 endmain:
     if (h) {
         flowtuple_release(h);
+    }
+    if (avreader) {
+        corsaro_destroy_avro_reader(avreader);
     }
 
     if (ftdata.writereq) {
