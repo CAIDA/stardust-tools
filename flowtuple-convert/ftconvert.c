@@ -45,37 +45,40 @@ static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
       {\"name\": \"prefix2asn\", \"type\": \"long\"} \
       ]}";
 
-#define FT_KEY(ft) \
+#define SLASH16_MASK (0x00FF0000)
+#define SLASH24_MASK (0x00FFFF00)
+
+#define FT_KEY(ft, mask) \
     ((((uint64_t)(ntohl(flowtuple_data_get_src_ip(ft)))) << 32) | \
-    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & mask) << 8) | \
     ((uint16_t)ntohs(flowtuple_data_get_dest_port(ft))))
 
-#define FT3_KEY(ft) \
+#define FT3_KEY(ft, mask) \
     ((((uint64_t)(ft.src_ip)) << 32) | \
-    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)(ft.dst_ip)) & mask) << 8) | \
     ((uint16_t)ft.dst_port))
 
-#define FT_ICMP_KEY(ft) \
+#define FT_ICMP_KEY(ft, mask) \
     ((((uint64_t)(ntohl(flowtuple_data_get_src_ip(ft)))) << 32) | \
-    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & mask) << 8) | \
     (((uint16_t)ntohs(flowtuple_data_get_src_port(ft))) << 8) | \
     ((uint16_t)ntohs(flowtuple_data_get_dest_port(ft))))
 
-#define FT3_ICMP_KEY(ft) \
+#define FT3_ICMP_KEY(ft, mask) \
     ((((uint64_t)(ft.src_ip)) << 32) | \
-    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)(ft.dst_ip)) & mask) << 8) | \
     (((uint16_t)ft.src_port) << 8) | \
     ((uint16_t)ft.dst_port))
 
 
-#define FT_OTHER_KEY(ft) \
+#define FT_OTHER_KEY(ft, mask) \
     ((((uint64_t)(ntohl(flowtuple_data_get_src_ip(ft)))) << 32) | \
-    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)flowtuple_data_get_dest_ip(ft)) & mask) << 8) | \
     (flowtuple_data_get_protocol(ft)))
 
-#define FT3_OTHER_KEY(ft) \
+#define FT3_OTHER_KEY(ft, mask) \
     ((((uint64_t)(ft.src_ip)) << 32) | \
-    ((((uint64_t)(ft.dst_ip)) & 0x00FF0000) << 8) | \
+    ((((uint64_t)(ft.dst_ip)) & mask) << 8) | \
     (ft.protocol))
 
 static inline double QUALITY_RATIO(uint32_t portcnt, uint64_t pkts) {
@@ -97,8 +100,8 @@ static inline double QUALITY_RATIO(uint32_t portcnt, uint64_t pkts) {
 #define KEY_TO_SRC_IP(k) \
         ((uint32_t)(k >> 32))
 
-#define KEY_TO_DEST_IP(k) \
-        ((uint32_t)(0x2c000000 | ((k & 0xFF000000) >> 8)))
+#define KEY_TO_DEST_IP(k, mask) \
+        ((uint32_t)(0x2c000000 | ((k & (mask << 8)) >> 8)))
 
 #define KEY_TO_DEST_PORT(k) \
         ((uint32_t)(k & 0xFFFF))
@@ -132,6 +135,7 @@ struct ftconverter {
     uint32_t interval;
     uint32_t conv_interval_size;
     uint32_t nextinterval;
+    uint32_t destipmask;
     Pvoid_t tcp_tuples;
     Pvoid_t udp_tuples;
     Pvoid_t icmp_tuples;
@@ -142,8 +146,9 @@ struct ftconverter {
 
 static void usage(char *prog) {
     fprintf(stderr, "Usage for %s\n\n", prog);
-    fprintf(stderr, "\t%s -I <interval size> -V <version> -o <outputfile> <inputfile> [<inputfile> ...]\n", prog);
+    fprintf(stderr, "\t%s -n <dest net size> -I <interval size> -V <version> -o <outputfile> <inputfile> [<inputfile> ...]\n", prog);
     fprintf(stderr, "\nFlowtuples will be written to the output file every <interval size> minutes\n");
+    fprintf(stderr, "\nDestination IPs will be aggregated into networks with a prefix length of <dest net size> (16 or 24)\n");
     fprintf(stderr, "\n<version> must be set to the flowtuple version of the srouce file\n");
     fprintf(stderr, "\n<inputfile> must be a flowtuple version 2 or 3 file\n");
     fprintf(stderr, "\n<outputfile> will be the template used to name the avro files that are written using the flowtuple version 4 format\n");
@@ -303,7 +308,7 @@ static void encode_flowtuple4_avro(flowtupleState *ft, Word_t key,
         return;
     }
 
-    val32 = KEY_TO_DEST_IP(key);
+    val32 = KEY_TO_DEST_IP(key, convdata->destipmask);
     if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
             &(val32), sizeof(val32)) < 0) {
         return;
@@ -499,11 +504,11 @@ static void update_tuples_ft2(struct ftconverter *ftdata, Pvoid_t *tuples,
     packets =  ntohl(flowtuple_data_get_packet_count(ft));
 
     if (proto == 6 || proto == 17) {
-        key = (Word_t)FT_KEY(ft);
+        key = (Word_t)FT_KEY(ft, ftdata->destipmask);
     } else if (proto == 1) {
-        key = (Word_t)FT_ICMP_KEY(ft);
+        key = (Word_t)FT_ICMP_KEY(ft, ftdata->destipmask);
     } else {
-        key = (Word_t)FT_OTHER_KEY(ft);
+        key = (Word_t)FT_OTHER_KEY(ft, ftdata->destipmask);
     }
 
     JLG(pval, *tuples, key);
@@ -596,16 +601,16 @@ static void convert_ft3(corsaro_avro_reader_t *avreader,
 
         if (proto == 6) {
             tuples = &(ftdata->tcp_tuples);
-            key = FT3_KEY(ft3);
+            key = FT3_KEY(ft3, ftdata->destipmask);
         } else if (proto == 17) {
             tuples = &(ftdata->udp_tuples);
-            key = FT3_KEY(ft3);
+            key = FT3_KEY(ft3, ftdata->destipmask);
         } else if (proto == 1) {
             tuples = &(ftdata->icmp_tuples);
-            key = FT3_ICMP_KEY(ft3);
+            key = FT3_ICMP_KEY(ft3, ftdata->destipmask);
         } else {
             tuples = &(ftdata->other_tuples);
-            key = FT3_OTHER_KEY(ft3);
+            key = FT3_OTHER_KEY(ft3, ftdata->destipmask);
         }
 
         JLG(pval, *tuples, key);
@@ -710,21 +715,26 @@ int main(int argc, char **argv) {
     struct ftconverter ftdata;
     uint32_t srcversion = 2;
     uint32_t interval_size = 1;
+    uint32_t destnetsize = 16;
 
     int c, ret = 0, i;
     const struct option long_opts[] = {
         { "help", no_argument, NULL, 'h' },
         { "output", required_argument, NULL, 'o' },
+        { "destnetsize", required_argument, NULL, 'n' },
         { "intervalsize", required_argument, NULL, 'I' },
         { "srcversion", required_argument, NULL, 'V' },
         { NULL, 0, NULL, 0 },
     };
 
-    while ((c = getopt_long(argc, argv, ":ho:V:I:", long_opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, ":hn:o:V:I:", long_opts, NULL)) != -1) {
         switch(c) {
             case 'h':
                 usage(argv[0]);
                 goto endmain;
+            case 'n':
+                destnetsize = strtoul(optarg, NULL, 0);
+                break;
             case 'o':
                 outputfile = strdup(optarg);
                 break;
@@ -760,6 +770,13 @@ int main(int argc, char **argv) {
         goto endmain;
     }
 
+    if (destnetsize != 16 && destnetsize != 24) {
+        fprintf(stderr, "Destination network size must be 16 or 24!\n");
+        usage(argv[0]);
+        goto endmain;
+    }
+
+
     logger = init_corsaro_logger("ftconvert", "");
 
     ftdata.avrow = corsaro_create_avro_writer(logger, NEW_FLOWTUPLE_RESULT_SCHEMA);
@@ -776,6 +793,11 @@ int main(int argc, char **argv) {
 
     ftdata.interval = 0;
     ftdata.nextinterval = 0;
+    if (destnetsize == 16) {
+        ftdata.destipmask = SLASH16_MASK;
+    } else {
+        ftdata.destipmask = SLASH24_MASK;
+    }
     ftdata.conv_interval_size = interval_size;
     ftdata.icmp_tuples = NULL;
     ftdata.tcp_tuples = NULL;
