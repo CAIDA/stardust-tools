@@ -40,6 +40,8 @@ static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
       {\"name\": \"common_srcport_freqs\", \"type\": { \"type\": \"array\", \"items\": \"long\"}}, \
       {\"name\": \"common_tcpflags\", \"type\": { \"type\": \"array\", \"items\": \"long\"}}, \
       {\"name\": \"common_tcpflag_freqs\", \"type\": { \"type\": \"array\", \"items\": \"long\"}}, \
+      {\"name\": \"maxmind_continent\", \"type\": \"string\"}, \
+      {\"name\": \"maxmind_country\", \"type\": \"string\"}, \
       {\"name\": \"netacq_continent\", \"type\": \"string\"}, \
       {\"name\": \"netacq_country\", \"type\": \"string\"}, \
       {\"name\": \"prefix2asn\", \"type\": \"long\"} \
@@ -126,6 +128,8 @@ typedef struct ft_state {
     uint16_t tcpsynlen;
     uint16_t tcpsynwinlen;
     uint32_t prefix2asn;
+    uint16_t maxmind_continent;
+    uint16_t maxmind_country;
     uint16_t netacq_continent;
     uint16_t netacq_country;
 } flowtupleState;
@@ -425,6 +429,23 @@ static void encode_flowtuple4_avro(flowtupleState *ft, Word_t key,
         return;
     }
 
+    valspace[0] = (char)(ft->maxmind_continent & 0xff);
+    valspace[1] = (char)((ft->maxmind_continent >> 8) & 0xff);
+    valspace[2] = '\0';
+
+    if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_STRING,
+                valspace, 2) < 0) {
+        return;
+    }
+    valspace[0] = (char)(ft->maxmind_country & 0xff);
+    valspace[1] = (char)((ft->maxmind_country >> 8) & 0xff);
+    valspace[2] = '\0';
+
+    if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_STRING,
+                valspace, 2) < 0) {
+        return;
+    }
+
     valspace[0] = (char)(ft->netacq_continent & 0xff);
     valspace[1] = (char)((ft->netacq_continent >> 8) & 0xff);
     valspace[2] = '\0';
@@ -518,6 +539,8 @@ static void update_tuples_ft2(struct ftconverter *ftdata, Pvoid_t *tuples,
         state->tcpsynlen = 0;
         state->tcpsynwinlen = 0;
         state->prefix2asn = 0;
+        state->maxmind_continent = ((uint16_t)'?') + (((uint16_t)'?') << 8);
+        state->maxmind_country = ((uint16_t)'?') + (((uint16_t)'?') << 8);
         state->netacq_continent = ((uint16_t)'?') + (((uint16_t)'?') << 8);
         state->netacq_country = ((uint16_t)'?') + (((uint16_t)'?') << 8);
         JLI(pval, *tuples, key);
@@ -620,6 +643,8 @@ static void convert_ft3(corsaro_avro_reader_t *avreader,
             state->tcpsynlen = ft3.tcp_synlen;
             state->tcpsynwinlen = ft3.tcp_synwinlen;
             state->prefix2asn = ft3.prefixasn;
+            state->maxmind_country = ft3.maxmind_country;
+            state->maxmind_continent = ft3.maxmind_continent;
             state->netacq_country = ft3.netacq_country;
             state->netacq_continent = ft3.netacq_continent;
             JLI(pval, *tuples, key);
