@@ -15,10 +15,11 @@ Simply run `make` from within the same directory as the ftconvert source code.
 
 ## Usage
 
+```
   ftconvert -o <output filename template> -V <previous version>
       -n <dest network aggregation> -I <interval length>
       <input file 1> [ <input file 2> ... ]
-
+```
 
 Input files must be flowtuple files created by either corsaro2 (typically these
 will have a suffix of `.cors.gz`) or corsaro3 (which will have a suffix of
