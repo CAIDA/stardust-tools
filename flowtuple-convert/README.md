@@ -92,7 +92,7 @@ you will require java to use this jar file.
 To dump the avro file to stdout as a series of JSON objects, you can do
 something like:
 
-  java -jar avro-tools-<version>.jar tojson <input file>
+    java -jar avro-tools-<version>.jar tojson <input file>
 
 There are also libraries available for most programming languages to read avro
 files.
