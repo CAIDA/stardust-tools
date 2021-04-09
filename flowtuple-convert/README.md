@@ -109,6 +109,8 @@ Field             |  Default Value
 ------------------|----------------
 first_syn_length  |  0
 first_tcp_rwin    |  0
+maxmind_continent  | ??
+maxmind_country    | ??
 netacq_continent  | ??
 netacq_country    | ??
 prefix2asn        |  0
