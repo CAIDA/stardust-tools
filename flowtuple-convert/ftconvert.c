@@ -16,8 +16,8 @@
 static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
 "{\"type\": \"record\",\
   \"namespace\":\"org.caida.corsaro\",\
-  \"name\":\"flowtuple3\",\
-  \"doc\":\"A Corsaro FlowTuple record. All byte fields are in network byte order.\",\
+  \"name\":\"flowtuple4\",\
+  \"doc\":\"A Corsaro FlowTuple4 record.\",\
   \"fields\":[\
       {\"name\": \"time\", \"type\": \"long\"}, \
       {\"name\": \"src_ip\", \"type\": \"long\"}, \
