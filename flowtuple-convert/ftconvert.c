@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <arpa/inet.h>
 #include <Judy.h>
+#include <sys/time.h>
 
 #include <flowtuple.h>
 #include <libcorsaro_avro.h>
