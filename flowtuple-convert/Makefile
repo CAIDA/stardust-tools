@@ -2,6 +2,7 @@ TARGET = ftconvert
 LIBS = -lwandio -lflowtuple -lcorsaro -ltrace -lJudy
 CC = gcc
 CFLAGS = -g -Wall -O2
+LDFLAGS=
 
 .PHONY: default all clean
 
@@ -17,7 +18,7 @@ HEADERS= $(wildcard *.h)
 .PRECIOUS: $(TARGET) $(OBJECTS)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -Wall -o $@ $(LIBS)
+	$(CC) $(OBJECTS) -Wall -o $@ $(LDFLAGS) $(LIBS)
 
 clean:
 	-rm -f *.o
