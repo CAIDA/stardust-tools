@@ -97,7 +97,7 @@ class StardustPysparkHelper(object):
         self.prefix = prefix
         self.ftrotfreq = ftrotfreq
 
-    def startSparkSession(self, name):
+    def startSparkSession(self, name, partitions):
         """
         Creates a Spark Session with the given name.
 
@@ -107,8 +107,11 @@ class StardustPysparkHelper(object):
         ----------
         name: str
             the name to be assigned to the new session
+        partitions: int
+            the number of partitions to create (roughly the number of CPU cores
+            to use for processing)
         """
-        self.spark = SparkSession.builder.appName(name).getOrCreate()
+        self.spark = SparkSession.builder.master("local[%d]" % (partitions)).appName(name).getOrCreate()
 
     def _getFlowtupleFileList(self, start, end, ftrotfreq):
         """
@@ -753,8 +756,8 @@ def StardustHelperExampleCode():
     sd = StardustPysparkHelper("telescope-ucsdnt-flowtuple-test",
             "swiftdev", "swiftdev")
 
-    # starting a spark session with the name "test"
-    sd.startSparkSession("test")
+    # starting a spark session with the name "test", using 4 partitions (CPUs)
+    sd.startSparkSession("test", 4)
 
     # getting all flowtuples into a dataframe
     all_recs = sd.getAllFlowtuples()
