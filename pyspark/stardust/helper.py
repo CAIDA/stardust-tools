@@ -44,6 +44,9 @@ from pyspark.sql.types import BooleanType, IntegerType, StructType
 # Simple function to multiply number of packets by the packet size
 calcTotalBytes = udf(lambda arr: arr[0] * arr[1], IntegerType())
 
+between = udf(lambda arr, m, n: any((x >= m and x <= n) for x in arr), \
+        BooleanType())
+
 class StardustPysparkHelper(object):
     """
     Provides methods that assist with performing analysis on
@@ -356,13 +359,13 @@ class StardustPysparkHelper(object):
         metric: str
             the name of the flow property you want to analyse. Must be a
             valid "column" in the flowtuple Avro output (e.g. "dst_port",
-            "ttl").
+            "maxmind_country").
 
         topn: int
             the maximum number of ranks to produce individual results for.
             All other values of lower rank will be accumulated into the
-            "Other" category. E.g., to get the top 10 TTL values, set this
-            to 10. Set to None if you want all ranks in your results.
+            "Other" category. E.g., to get the top 10 destination ports,
+            set this to 10. Set to None if you want all ranks in your results.
 
         includeother: boolean
             Set to True if you want the "Other" category included in your
@@ -393,7 +396,11 @@ class StardustPysparkHelper(object):
 
     def getTopValuesByUniqueDestIpCount(self, ftuples, metric, topn,
             includeother=True):
-        # TODO
+        if metric not in ftuples.columns:
+            return None
+
+        return self._getTopValues(ftuples, metric, topn, "dest_ips",
+                "SUM(uniq_dst_ips)", includeother)
         return None
 
 
@@ -417,12 +424,12 @@ class StardustPysparkHelper(object):
         metric: str
             the name of the flow property you want to analyse. Must be a
             valid "column" in the flowtuple Avro output (e.g. "dst_port",
-            "ttl").
+            "maxmind_country").
 
         topn: int
             the maximum number of ranks to produce individual results for.
             All other values of lower rank will be accumulated into the
-            "Other" category. E.g., to get the top 10 TTL values, set this
+            "Other" category. E.g., to get the top 10 countries, set this
             to 10. Set to None if you want all ranks in your results.
 
         includeother: boolean
@@ -480,7 +487,6 @@ class StardustPysparkHelper(object):
         start = curr - secondsback
 
         return self.getFlowtuplesByTimeRange(start, curr)
-    
 
     def getAllFlowtuples(self):
         """
@@ -571,6 +577,8 @@ class StardustPysparkHelper(object):
             return False
         return udf(__prefixfilter, BooleanType())
 
+
+
     def filterFlowtuplesByPrefix(self, ftuples, prefix, ftsorted=False,
             limitnum=None):
         """
@@ -615,7 +623,21 @@ class StardustPysparkHelper(object):
 
         return interim
 
-    
+    def filterFlowtuplesByCommonValue(self, ftuples, metric, ranges):
+        if metric not in ftuples.columns:
+            return ftuples
+
+        result = None
+        for rmin, rmax in ranges:
+            interim = ftuples.where(between(col(metric), lit(rmin), lit(rmax)))
+
+            if result is None:
+                result = interim
+            else:
+                result = result.unionAll(interim)
+
+        return result
+
     def generateReportOutputFromFlowtuples(self, ftuples, label=None,
             metricname=None, metricvalue=None):
         """
@@ -700,8 +722,8 @@ class StardustPysparkHelper(object):
     # matched a single condition or not.
     #
     # E.g., if I'm interested in the number of Russian-sourced flows that
-    # also had a TTL < 64, I would pass in a list containing two where
-    # clauses: ["netacq_country == 'RU'", "ttl < 64"]
+    # also had a destination port < 1024, I would pass in a list containing two
+    # where clauses: ["maxmind_country == 'RU'", "dst_port < 1024"]
     #
     # All flowtuples that match the first clause (country is 'RU') will
     # be returned in the baseline dataframe. Only flowtuples that match
@@ -725,11 +747,11 @@ class StardustPysparkHelper(object):
             first item in this list will also be used to generate the
             "baseline" result set.
 
-            For example, to get the set of flowtuples where the TTL is
-            less than 64 and the source IP was Russian, we would pass in
-            ["netacq_country == 'RU'", "ttl < 64"]. The baseline result
-            set would then be all flowtuples that have a Russian source
-            IP, regardless of TTL.
+            For example, to get the set of flowtuples where the destination
+            port is less than 1024 and the source IP was Russian, we would pass
+            in ["netacq_country == 'RU'", "dest_port < 1024"]. The baseline
+            result set would then be all flowtuples that have a Russian source
+            IP, regardless of destination port.
 
         Returns
         -------
