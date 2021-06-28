@@ -156,7 +156,7 @@ class StardustPysparkHelper(object):
                 break
 
             t = time.gmtime(roundstamp)
-            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/hour=%02d/%s.%u.flowtuple.avro" % \
+            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/hour=%02d/%s_%u.ft4.avro" % \
                     (self.bucket, self.source, t[0], t[1], t[2], t[3], \
                      self.prefix, roundstamp)
             yielded += 1
@@ -390,6 +390,12 @@ class StardustPysparkHelper(object):
 
         return self._getTopValues(ftuples, metric, topn, "flows", "COUNT(*)",
                 includeother)
+
+    def getTopValuesByUniqueDestIpCount(self, ftuples, metric, topn,
+            includeother=True):
+        # TODO
+        return None
+
 
     def getTopValuesByPacketCount(self, ftuples, metric, topn,
             includeother=True):
@@ -664,18 +670,23 @@ class StardustPysparkHelper(object):
         else:
             fulllabel = "%s.%s" % (label, metricname)
 
-        ftuples = ftuples.withColumn("totalbytes", calcTotalBytes(array("packet_cnt", "ip_len")))
+        # With FT4, we can't get an accurate byte count anymore since we
+        # don't record total bytes for each FT :/
+
+        #ftuples = ftuples.withColumn("totalbytes", calcTotalBytes(array("packet_cnt", "ip_len")))
 
         grouped = ftuples.groupBy(["time"])
 
-        agged = grouped.agg({'packet_cnt': "sum", "totalbytes": "sum"})\
-                .withColumnRenamed('sum(packet_cnt)', "pkt_cnt")\
-                .withColumnRenamed('sum(totalbytes)', "byte_cnt")\
+        #agged = grouped.agg({'packet_cnt': "sum", "totalbytes": "sum"})\
+        #        .withColumnRenamed('sum(packet_cnt)', "pkt_cnt")\
+        #        .withColumnRenamed('sum(totalbytes)', "byte_cnt")\
+        agged = grouped.agg({'packet_cnt': "sum"})\
+                .withColumnRenamed('sum(packet_cnt)', "pkt_cnt")
 
-        agged2 = grouped.agg(countDistinct("src_ip"), countDistinct("dst_ip"),
+        agged2 = grouped.agg(countDistinct("src_ip"), countDistinct("dst_net"),
                 countDistinct("prefix2asn"))\
                 .withColumnRenamed("count(DISTINCT src_ip)", "src_ip_cnt")\
-                .withColumnRenamed("count(DISTINCT dst_ip)", "dest_ip_cnt")\
+                .withColumnRenamed("count(DISTINCT dst_net)", "dest_ip_cnt")\
                 .withColumnRenamed("count(DISTINCT prefix2asn)", "src_asn_cnt")
 
         final = agged.join(agged2, on=["time"], how="left_outer")\
