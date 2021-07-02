@@ -1,4 +1,4 @@
-# This software is Copyright (C) 2019 The Regents of the University of
+# This software is Copyright (C) 2019-2021 The Regents of the University of
 # California. All Rights Reserved. Permission to copy, modify, and distribute
 # this software and its documentation for educational, research and non-profit
 # purposes, without fee, and without a written agreement is hereby granted,
@@ -44,6 +44,9 @@ from pyspark.sql.types import BooleanType, IntegerType, StructType
 # Simple function to multiply number of packets by the packet size
 calcTotalBytes = udf(lambda arr: arr[0] * arr[1], IntegerType())
 
+between = udf(lambda arr, m, n: any((x >= m and x <= n) for x in arr), \
+        BooleanType())
+
 class StardustPysparkHelper(object):
     """
     Provides methods that assist with performing analysis on
@@ -67,11 +70,11 @@ class StardustPysparkHelper(object):
 
     ftrotfreq: int
         the frequency at which flowtuple output files are rotated
-        (default 60)
+        (default 300)
 
     """
 
-    def __init__(self, bucket, source, prefix, ftrotfreq = 60):
+    def __init__(self, bucket, source, prefix, ftrotfreq = 300):
         """
         Parameters
         ----------
@@ -88,7 +91,7 @@ class StardustPysparkHelper(object):
 
         ftrotfreq: int
             the frequency at which flowtuple output files are rotated
-            (default 60)
+            (default 300)
 
         """
         self.spark = None
@@ -97,7 +100,7 @@ class StardustPysparkHelper(object):
         self.prefix = prefix
         self.ftrotfreq = ftrotfreq
 
-    def startSparkSession(self, name):
+    def startSparkSession(self, name, partitions):
         """
         Creates a Spark Session with the given name.
 
@@ -107,8 +110,11 @@ class StardustPysparkHelper(object):
         ----------
         name: str
             the name to be assigned to the new session
+        partitions: int
+            the number of partitions to create (roughly the number of CPU cores
+            to use for concurrent processing)
         """
-        self.spark = SparkSession.builder.appName(name).getOrCreate()
+        self.spark = SparkSession.builder.master("local[%d]" % (partitions)).appName(name).getOrCreate()
 
     def _getFlowtupleFileList(self, start, end, ftrotfreq):
         """
@@ -143,8 +149,6 @@ class StardustPysparkHelper(object):
         # that would result in files having non-aligned timestamps...
         roundstamp = start - (start % ftrotfreq)
 
-#        roundt = (t[0], t[1], t[2], t[3], 0, 0, t[6], t[7], t[8])
-#        roundstamp = calendar.timegm(roundt)
         yielded = 0;
 
         while roundstamp <= end:
@@ -153,7 +157,7 @@ class StardustPysparkHelper(object):
                 break
 
             t = time.gmtime(roundstamp)
-            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/hour=%02d/%s.%u.flowtuple.avro" % \
+            yield "s3a://%s/datasource=%s/year=%d/month=%02d/day=%02d/hour=%02d/%s_%u.ft4.avro" % \
                     (self.bucket, self.source, t[0], t[1], t[2], t[3], \
                      self.prefix, roundstamp)
             yielded += 1
@@ -264,13 +268,13 @@ class StardustPysparkHelper(object):
 
         metric: str
             the name of the flow property you want to analyse. Must be a
-            valid "column" in the flowtuple Avro output (e.g. "dst_port",
-            "ttl").
+            valid single-value "column" in the flowtuple Avro output (e.g.
+            "dst_port", "maxmind_country").
 
         topn: int
             the maximum number of ranks to produce individual results for.
             All other values of lower rank will be accumulated into the
-            "Other" category. E.g., to get the top 10 TTL values, set this
+            "Other" category. E.g., to get the top 10 values, set this
             to 10. Set to None if you want all ranks in your results.
 
         topbylabel: str
@@ -334,7 +338,7 @@ class StardustPysparkHelper(object):
 
         return result
 
-    
+
     def getTopValuesByFlowCount(self, ftuples, metric, topn, includeother=True):
         """
         For a given flow property, such as geo-located country or destination
@@ -352,14 +356,14 @@ class StardustPysparkHelper(object):
 
         metric: str
             the name of the flow property you want to analyse. Must be a
-            valid "column" in the flowtuple Avro output (e.g. "dst_port",
-            "ttl").
+            valid single-value "column" in the flowtuple Avro output (e.g.
+            "dst_port", "maxmind_country").
 
         topn: int
             the maximum number of ranks to produce individual results for.
             All other values of lower rank will be accumulated into the
-            "Other" category. E.g., to get the top 10 TTL values, set this
-            to 10. Set to None if you want all ranks in your results.
+            "Other" category. E.g., to get the top 10 values
+            set this to 10. Set to None if you want all ranks in your results.
 
         includeother: boolean
             Set to True if you want the "Other" category included in your
@@ -388,6 +392,64 @@ class StardustPysparkHelper(object):
         return self._getTopValues(ftuples, metric, topn, "flows", "COUNT(*)",
                 includeother)
 
+    def getTopValuesByUniqueDestIpCount(self, ftuples, metric, topn,
+            includeother=True):
+        """
+        For a given flow property, such as geo-located country or destination
+        port, return the top N values for that property based on the number
+        of unique (source IP, dest IP, protocol, dest port) combinations that
+        matched that property value. Combinations are counted once per interval
+        that they appear in.
+
+        For instance, you could use this function to determine the top 10 most
+        popular source countries or the top 20 most popular destination ports.
+
+        Parameters
+        ----------
+        ftuples: DataFrame
+            the data frame containing the flowtuple records to run the
+            query against
+
+        metric: str
+            the name of the flow property you want to analyse. Must be a
+            valid single-value "column" in the flowtuple Avro output (e.g.
+            "dst_port", "maxmind_country").
+
+        topn: int
+            the maximum number of ranks to produce individual results for.
+            All other values of lower rank will be accumulated into the
+            "Other" category. E.g., to get the top 10 values
+            set this to 10. Set to None if you want all ranks in your results.
+
+        includeother: boolean
+            Set to True if you want the "Other" category included in your
+            result dictionary. Set to False to exclude it.
+
+        Returns
+        -------
+        A dictionary containing the top ranked values for the specified
+        property. For each ranked value, the dictionary will contain the
+        following entries:
+         * rank -- the rank of the value
+         * name -- the name assigned to the value
+         * flows -- the number of flows matching that value
+         * pct -- the proportion (between 0.0 and 1.0) of IP targets
+                  that match the value
+         * cumpct -- the cumulative proportion (between 0.0 and 1.0) of IPs
+                     that match the value and any higher-ranked values, i.e.
+                     for a value with rank 3, this will be the sum of the
+                     proportions for the values of ranks 1, 2 and 3. Useful
+                     for plotting a CDF.
+
+        """
+        if metric not in ftuples.columns:
+            return None
+
+        return self._getTopValues(ftuples, metric, topn, "dest_ips",
+                "SUM(uniq_dst_ips)", includeother)
+        return None
+
+
     def getTopValuesByPacketCount(self, ftuples, metric, topn,
             includeother=True):
 
@@ -408,12 +470,12 @@ class StardustPysparkHelper(object):
         metric: str
             the name of the flow property you want to analyse. Must be a
             valid "column" in the flowtuple Avro output (e.g. "dst_port",
-            "ttl").
+            "maxmind_country").
 
         topn: int
             the maximum number of ranks to produce individual results for.
             All other values of lower rank will be accumulated into the
-            "Other" category. E.g., to get the top 10 TTL values, set this
+            "Other" category. E.g., to get the top 10 countries, set this
             to 10. Set to None if you want all ranks in your results.
 
         includeother: boolean
@@ -471,14 +533,14 @@ class StardustPysparkHelper(object):
         start = curr - secondsback
 
         return self.getFlowtuplesByTimeRange(start, curr)
-    
 
     def getAllFlowtuples(self):
         """
         Loads *all* flowtuple records in a data set into a data frame.
 
         Be careful -- trying to do analysis against the whole dataset
-        at once will probably lead of OOM errors!
+        at once will probably lead of OOM errors! DO NOT CALL THIS METHOD
+        UNLESS YOU KNOW WHAT YOU ARE DOING!
 
         Returns
         -------
@@ -562,6 +624,8 @@ class StardustPysparkHelper(object):
             return False
         return udf(__prefixfilter, BooleanType())
 
+
+
     def filterFlowtuplesByPrefix(self, ftuples, prefix, ftsorted=False,
             limitnum=None):
         """
@@ -606,8 +670,48 @@ class StardustPysparkHelper(object):
 
         return interim
 
-    
-    def generateReportOutputFromFlowtuples(self, ftuples, label=None,
+    def filterFlowtuplesByCommonValue(self, ftuples, metric, ranges):
+        """
+        Removes all flowtuples that do not have a "common" value, e.g.
+        source port, TTL, packet size, that is between one of the provided
+        ranges.
+
+        Parameters
+        ----------
+        ftuples: DataFrame
+            The set of flowtuple records to be filtered.
+
+        metric: unicode str
+            The name of the field to use when filtering, e.g. "common_ttls".
+            The field must be one of the array fields in the flowtuple
+            schema.
+
+        ranges: list of 2-tuples
+            A list of numeric ranges (expressed as (min, max)) within which
+            a common value must be observed to retain a flowtuple in the
+            returned DataFrame. Note that ranges are **inclusive**. Multiple
+            ranges may be specified.
+
+        Returns
+        -------
+        A data frame containing flowtuple records where the requested metric
+        includes at least one common value within the specified ranges.
+        """
+        if metric not in ftuples.columns:
+            return ftuples
+
+        result = None
+        for rmin, rmax in ranges:
+            interim = ftuples.where(between(col(metric), lit(rmin), lit(rmax)))
+
+            if result is None:
+                result = interim
+            else:
+                result = result.unionAll(interim)
+
+        return result
+
+    def generateSeriesFromFlowtuples(self, ftuples, label=None,
             metricname=None, metricvalue=None):
         """
         Aggregates the flowtuples in a data frame to produce a time
@@ -661,18 +765,18 @@ class StardustPysparkHelper(object):
         else:
             fulllabel = "%s.%s" % (label, metricname)
 
-        ftuples = ftuples.withColumn("totalbytes", calcTotalBytes(array("packet_cnt", "ip_len")))
+        # With FT4, we can't get an accurate byte count anymore since we
+        # don't record total bytes for each FT :/
 
         grouped = ftuples.groupBy(["time"])
 
-        agged = grouped.agg({'packet_cnt': "sum", "totalbytes": "sum"})\
-                .withColumnRenamed('sum(packet_cnt)', "pkt_cnt")\
-                .withColumnRenamed('sum(totalbytes)', "byte_cnt")\
+        agged = grouped.agg({'packet_cnt': "sum"})\
+                .withColumnRenamed('sum(packet_cnt)', "pkt_cnt")
 
-        agged2 = grouped.agg(countDistinct("src_ip"), countDistinct("dst_ip"),
+        agged2 = grouped.agg(countDistinct("src_ip"), countDistinct("dst_net"),
                 countDistinct("prefix2asn"))\
                 .withColumnRenamed("count(DISTINCT src_ip)", "src_ip_cnt")\
-                .withColumnRenamed("count(DISTINCT dst_ip)", "dest_ip_cnt")\
+                .withColumnRenamed("count(DISTINCT dst_net)", "dest_ip_cnt")\
                 .withColumnRenamed("count(DISTINCT prefix2asn)", "src_asn_cnt")
 
         final = agged.join(agged2, on=["time"], how="left_outer")\
@@ -686,8 +790,8 @@ class StardustPysparkHelper(object):
     # matched a single condition or not.
     #
     # E.g., if I'm interested in the number of Russian-sourced flows that
-    # also had a TTL < 64, I would pass in a list containing two where
-    # clauses: ["netacq_country == 'RU'", "ttl < 64"]
+    # also had a destination port < 1024, I would pass in a list containing two
+    # where clauses: ["maxmind_country == 'RU'", "dst_port < 1024"]
     #
     # All flowtuples that match the first clause (country is 'RU') will
     # be returned in the baseline dataframe. Only flowtuples that match
@@ -711,11 +815,11 @@ class StardustPysparkHelper(object):
             first item in this list will also be used to generate the
             "baseline" result set.
 
-            For example, to get the set of flowtuples where the TTL is
-            less than 64 and the source IP was Russian, we would pass in
-            ["netacq_country == 'RU'", "ttl < 64"]. The baseline result
-            set would then be all flowtuples that have a Russian source
-            IP, regardless of TTL.
+            For example, to get the set of flowtuples where the destination
+            port is less than 1024 and the source IP was Russian, we would pass
+            in ["netacq_country == 'RU'", "dest_port < 1024"]. The baseline
+            result set would then be all flowtuples that have a Russian source
+            IP, regardless of destination port.
 
         Returns
         -------
@@ -750,17 +854,14 @@ def StardustHelperExampleCode():
     """
 
     # creating an instance of a helper
-    sd = StardustPysparkHelper("telescope-ucsdnt-flowtuple-test",
-            "swiftdev", "swiftdev")
+    sd = StardustPysparkHelper("telescope-ucsdnt-avro-flowtuple-v4-2021",
+            "ucsd-nt", "v3_5min")
 
-    # starting a spark session with the name "test"
-    sd.startSparkSession("test")
-
-    # getting all flowtuples into a dataframe
-    all_recs = sd.getAllFlowtuples()
+    # starting a spark session with the name "test", using 4 partitions (CPUs)
+    sd.startSparkSession("test", 4)
 
     # getting flowtuple records from a specific time range
-    range_recs = sd.getFlowtuplesByTimeRange(1574352000, 1574356000)
+    range_recs = sd.getFlowtuplesByTimeRange(1612130100, 1612133700)
 
     # getting the last day's worth of flowtuple records
     lastday_recs = sd.getFlowtuplesByRecentTime(60 * 60 * 24)
@@ -770,7 +871,8 @@ def StardustHelperExampleCode():
     # function without doing some sort of sanitization to protect
     # against SQL injection.
     query_df = sd.runSQLAgainstFlowtuples(range_recs, "flowtuples", \
-            "SELECT * from flowtuples WHERE ttl > 200 AND tcp_synlen > 24")
+            "SELECT * from flowtuples WHERE uniq_dst_ips > 30000 " + \
+            "AND first_syn_length > 24")
 
     # get the number of flows that matched our query
     print(query_df.count())
@@ -793,14 +895,14 @@ def StardustHelperExampleCode():
     # finding flowtuples that match a set of filtering criteria
     # base will contain flowtuples with a Russian source IP,
     # sect will contain flowtuples with a Russian source IP that
-    # have also been flagged as generated by masscan.
+    # use multiple TTLs.
     sect, base = sd.createFlowtupleIntersection(range_recs,
-            ["netacq_country == 'RU'", "is_masscan == 1"])
+            ["netacq_country == 'RU'", "uniq_ttls > 1"])
 
     # generate aggregated report-style time series data for the intersection
     # we just generated
     sect_report = sd.generateReportOutputFromFlowtuples(sect, "example",
-            "ftintersect", "RU_masscan")
+            "ftintersect", "RU_multiTTL")
 
     # generate a second report time series from the baseline (to compare
     # against the intersection data)
@@ -818,4 +920,15 @@ def StardustHelperExampleCode():
     for i in range(0, sect_report.count()):
         print(sect_results[i], base_results[i])
 
+
+    # get all flowtuples where the TTL falls between 20 and 30 OR 70 and 80
+    q_res = sd.filterFlowtuplesByCommonValue(range_recs, "common_ttls",
+                [(20, 30), (70, 80)])
+
+
+    # show the top 10 destination ports (by flow count) for Russian source IPs
+    # setting the last parameter to True will also include an "Other" category
+    topn = sd.getTopValuesByFlowCount(base, "netacq_country", 10, True)
+    for k,v in topn.items():
+        print(v)
 
