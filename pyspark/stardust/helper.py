@@ -624,6 +624,53 @@ class StardustPysparkHelper(object):
             return False
         return udf(__prefixfilter, BooleanType())
 
+    # TODO look into scala UDFs to speed this up
+    def _isSpoofed(self):
+        # Rules we can't duplicate here:
+        #  * fragment filter
+        #  * non-masscan TTL 200+
+
+        def __isSpoofed(src_ip, dest_net, protocol, src_port, dest_port, flags):
+            # abnormal protocol
+            if protocol not in [1, 6, 17, 41]:
+                return True
+
+            # last source address byte is 0
+            if (src_ip & 0xFF) == 0:
+                return True
+
+            # last source address byte is 255
+            if (src_ip & 0xFF) == 0xFF:
+                return True
+
+            # same source and destination "address"
+            # Not quite an exact match, but should be near enough to match
+            # the intent (i.e. a genuine source IP would not be from within
+            # a telescope subnet).
+            if (src_ip & 0xFFFF0000) == dest_net:
+                return True
+
+            if protocol == 17:
+                # UDP port 0
+                if (src_port == 0 or dest_port == 0):
+                    return True
+                # UDP dest port 80
+                if (dest_port == 80):
+                    return True
+
+            # TCP port 0
+            if protocol == 6 and (src_port == 0 or dest_port == 0):
+                return True
+
+            # abnormal tcp flags
+            if protocol == 6:
+                flag_combos = [2, 16, 4, 1, 3, 18, 17, 24, 25]
+                if len(flags) > 0 and not any(f in flags for f in flag_combos):
+                    return True
+
+            return False
+
+        return udf(__isSpoofed, BooleanType())
 
 
     def filterFlowtuplesByPrefix(self, ftuples, prefix, ftsorted=False,
@@ -710,6 +757,26 @@ class StardustPysparkHelper(object):
                 result = result.unionAll(interim)
 
         return result
+
+    def filterErratic(self, ftuples):
+        if "src_ip" not in ftuples.columns():
+            return ftuples
+        if "dst_net" not in ftuples.columns():
+            return ftuples
+        if "src_port" not in ftuples.columns():
+            return ftuples
+        if "dst_port" not in ftuples.columns():
+            return ftuples
+        if "protocol" not in ftuples.columns():
+            return ftuples
+
+        if "common_tcpflags" not in ftuples.columns():
+            ftuples = ftuples.withColumn('common_tcpflags', array())
+
+        return ftuples.where((self._isSpoofed()(col('src_ip'), col('dst_net'), \
+               col('protocol'), col('src_port'), col('dst_port'), \
+               col('common_tcpflags'))))
+
 
     def generateSeriesFromFlowtuples(self, ftuples, label=None,
             metricname=None, metricvalue=None):
