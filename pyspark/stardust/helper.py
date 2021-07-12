@@ -652,15 +652,20 @@ class StardustPysparkHelper(object):
 
             if protocol == 17:
                 # UDP port 0
-                if (src_port == 0 or dest_port == 0):
+                if (dest_port == 0):
                     return True
                 # UDP dest port 80
                 if (dest_port == 80):
                     return True
+                if len(src_ports) > 0 and 0 in src_ports:
+                    return True
 
             # TCP port 0
-            if protocol == 6 and (src_port == 0 or dest_port == 0):
-                return True
+            if protocol == 6:
+                if (dest_port == 0):
+                    return True
+                if len(src_ports) > 0 and 0 in src_ports:
+                    return True
 
             # abnormal tcp flags
             if protocol == 6:
@@ -671,6 +676,53 @@ class StardustPysparkHelper(object):
             return False
 
         return udf(__isSpoofed, BooleanType())
+
+
+    def _isErratic(self):
+
+        # Rules we can't duplicate here:
+        #  * UDP 0x31
+        #  * SIP Status
+        #  * Odd DNS response port
+        #  * Netbios Name
+        #  * Bittorrent
+
+        def __isErratic(protocol, src_ports, dest_port, flags, ttls, pktsizes):
+            # TTL >= 200
+            if any(t >= 200 for t in ttls) and protocol != 1:
+                return True
+
+            # UDP length 96 or 1500
+            if any((s == 96 or s == 1500) for s in pktsizes) and protocol == 17:
+                return True
+
+            # Source or dest port is 53
+            if protocol == 6 or protocol == 17:
+                if dest_port == 53:
+                    return True
+                if any(p == 53 for p in src_ports):
+                    return True
+
+            if protocol == 1:
+                icmptype = (dest_port >> 8)
+                # ICMP backscatter
+                if icmptype in [0, 3, 4, 5, 11, 12, 14, 16, 18]:
+                    return True
+
+            if protocol == 6:
+                # TCP port 23, 80 or 5000
+                badports = [80, 5000, 23]
+                if any(p in badports for p in src_ports):
+                    return True
+
+                # TCP backscatter (SYN ACKs, RSTs)
+                back_flags = [4, 18]
+                if any(f in back_flags for f in flags):
+                    return True
+
+            return False
+
+        return udf(__isErratic, BooleanType())
 
 
     def filterFlowtuplesByPrefix(self, ftuples, prefix, ftsorted=False,
@@ -759,23 +811,33 @@ class StardustPysparkHelper(object):
         return result
 
     def filterErratic(self, ftuples):
-        if "src_ip" not in ftuples.columns():
+        if "src_ip" not in ftuples.columns:
             return ftuples
-        if "dst_net" not in ftuples.columns():
+        if "dst_net" not in ftuples.columns:
             return ftuples
-        if "src_port" not in ftuples.columns():
+        if "dst_port" not in ftuples.columns:
             return ftuples
-        if "dst_port" not in ftuples.columns():
+        if "protocol" not in ftuples.columns:
             return ftuples
-        if "protocol" not in ftuples.columns():
-            return ftuples
+        if "common_srcports" not in ftuples.columns:
+            ftuples = ftuples.withColumn('common_srcports', array())
+        if "common_ttls" not in ftuples.columns:
+            ftuples = ftuples.withColumn('common_ttls', array())
+        if "common_pktsizes" not in ftuples.columns:
+            ftuples = ftuples.withColumn('common_pktsizes', array())
 
-        if "common_tcpflags" not in ftuples.columns():
+        if "common_tcpflags" not in ftuples.columns:
             ftuples = ftuples.withColumn('common_tcpflags', array())
 
-        return ftuples.where((self._isSpoofed()(col('src_ip'), col('dst_net'), \
-               col('protocol'), col('src_port'), col('dst_port'), \
-               col('common_tcpflags'))))
+        rem_spoofed = ftuples.where(~ (self._isSpoofed()(col('src_ip'), \
+                col('dst_net'), \
+                col('protocol'), col('common_srcports'), col('dst_port'), \
+                col('common_tcpflags'))))
+
+        return ftuples.where(~ (self._isErratic()(col('protocol'), \
+                col('common_srcports'), col('dst_port'), \
+                col('common_tcpflags'), col('common_ttls'), \
+                col('common_pktsizes'))))
 
 
     def generateSeriesFromFlowtuples(self, ftuples, label=None,
