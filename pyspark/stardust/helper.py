@@ -834,7 +834,7 @@ class StardustPysparkHelper(object):
                 col('protocol'), col('common_srcports'), col('dst_port'), \
                 col('common_tcpflags'))))
 
-        return ftuples.where(~ (self._isErratic()(col('protocol'), \
+        return rem_spoofed.where(~ (self._isErratic()(col('protocol'), \
                 col('common_srcports'), col('dst_port'), \
                 col('common_tcpflags'), col('common_ttls'), \
                 col('common_pktsizes'))))
