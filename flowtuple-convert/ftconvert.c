@@ -45,7 +45,9 @@ static const char NEW_FLOWTUPLE_RESULT_SCHEMA[] =
       {\"name\": \"maxmind_country\", \"type\": \"string\"}, \
       {\"name\": \"netacq_continent\", \"type\": \"string\"}, \
       {\"name\": \"netacq_country\", \"type\": \"string\"}, \
-      {\"name\": \"prefix2asn\", \"type\": \"long\"} \
+      {\"name\": \"prefix2asn\", \"type\": \"long\"}, \
+      {\"name\": \"spoofed_packet_cnt\", \"type\": \"long\"}, \
+      {\"name\": \"masscan_packet_cnt\", \"type\": \"long\"} \
       ]}";
 
 #define SLASH16_MASK (0x00FF0000)
@@ -133,6 +135,8 @@ typedef struct ft_state {
     uint16_t maxmind_country;
     uint16_t netacq_continent;
     uint16_t netacq_country;
+    uint64_t spoofed;
+    uint64_t masscan;
 } flowtupleState;
 
 struct ftconverter {
@@ -470,6 +474,19 @@ static void encode_flowtuple4_avro(flowtupleState *ft, Word_t key,
             &(val32), sizeof(val32)) < 0) {
         return;
     }
+
+    val64 = ft->spoofed;
+    if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
+            &(val64), sizeof(val64)) < 0) {
+        return;
+    }
+
+    val64 = ft->masscan;
+    if (corsaro_encode_avro_field(convdata->avrow, CORSARO_AVRO_LONG,
+            &(val64), sizeof(val64)) < 0) {
+        return;
+    }
+
 }
 
 static inline void update_single(Pvoid_t *map, Word_t key, uint32_t packets) {
@@ -668,6 +685,12 @@ static void convert_ft3(corsaro_avro_reader_t *avreader,
         update_single(&(state->pktsizes), ft3.ip_len, packets);
 
         state->totalpackets += packets;
+        if (ft3.is_spoofed) {
+            state->spoofed += packets;
+        }
+        if (ft3.is_masscan) {
+            state->masscan += packets;
+        }
     }
 
 }
