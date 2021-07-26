@@ -64,7 +64,7 @@ Convert flowtuple3 files into 5 minutely flowtuple4 files, aggregating
 destination IPs into /16s:
 
 ```
-  ftconvert -o "example/avro/v3_5min_example_%s.ft.avro" -V 2 -n 16 -I 5 \
+  ftconvert -o "example/avro/v3_5min_example_%s.ft.avro" -V 3 -n 16 -I 5 \
      ~/avrodownloads/ucsd-nt.161532*.avro
 ```
 
